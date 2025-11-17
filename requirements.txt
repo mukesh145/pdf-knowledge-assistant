@@ -1,1 +1,5 @@
 langgraph
+dspy-ai
+openai
+pyyaml
+python-dotenv
