@@ -1,3 +1,6 @@
 intent_classification_model:
   name: "openai/gpt-3.5-turbo"
 
+embeddings_model:
+  name: "BAAI/bge-m3"
+

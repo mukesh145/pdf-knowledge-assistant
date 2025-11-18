@@ -2,6 +2,7 @@ from typing import TypedDict, Union
 from langgraph.graph import StateGraph, START, END
 from .query_processing import QueryProcessor
 from .intent_classifier import IntentClassifier
+from .context_retriever import ContextRetriever
 
 
 class QueryState(TypedDict):
@@ -76,21 +77,29 @@ def get_memory_node(state: QueryState) -> QueryState:
         "memory": "memory node called"
     }
 
-# Dummy Node as of now
 def get_context_node(state: QueryState) -> QueryState:
     """
-    Node function that retrieves previous conversation context.
-    This is a placeholder that will be implemented later.
+    Node function that retrieves context from the vector database using RAG.
     
     Args:
-        state: The current state
+        state: The current state containing the processed query
         
     Returns:
-        Updated state (placeholder implementation)
+        Updated state with context retrieved from vector database
     """
-    # TODO: Implement previous memory retrieval logic
+    # Initialize context retriever
+    context_retriever = ContextRetriever()
+    
+    # Retrieve context using the processed query
+    # retrieve_context returns a list of context strings
+    contexts = context_retriever.retrieve_context(state["processed_query"], top_k=5)
+    
+    # Join the list of contexts into a single string
+    # Use newlines to separate different context chunks
+    context_string = "\n\n".join(contexts) if contexts else ""
+    
     return {
-        "context": "Context node called"
+        "context": context_string
     }
 
 
