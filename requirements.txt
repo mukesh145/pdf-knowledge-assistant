@@ -7,3 +7,4 @@ FlagEmbedding
 numpy
 pinecone
 unstructured[pdf]
+psycopg2-binary

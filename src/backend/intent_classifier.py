@@ -2,6 +2,7 @@ import dspy
 from dotenv import load_dotenv
 from dspy import Signature, InputField, OutputField
 from dspy import LM
+from pathlib import Path
 from .utils import load_config
 
 # Load environment variables from .env file
@@ -45,8 +46,11 @@ class IntentClassifier:
         Returns:
             Configured DSPy language model
         """
+        project_root = Path(__file__).parent.parent.parent
+        config_path = project_root / "configs" / "backend_config.yaml"
+    
         # Load configuration
-        config = load_config("configs/backend_config.yaml")
+        config = load_config(config_path)
         
         # Get model name from config
         model_name = config.get("intent_classification_model", {}).get("name", "openai/gpt-3.5-turbo")

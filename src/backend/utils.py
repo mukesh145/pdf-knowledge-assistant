@@ -15,6 +15,7 @@ def load_config(config_path: str = None) -> dict:
     if config_path is None:
         # Get the project root directory (parent of src)
         project_root = Path(__file__).parent.parent.parent
+     
         config_path = project_root / "configs" / "backend_config.yaml"
     else:
         config_path = Path(config_path)
