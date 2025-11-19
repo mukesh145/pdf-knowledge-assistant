@@ -3,7 +3,12 @@ from langgraph.graph import StateGraph, START, END
 from .query_processing import QueryProcessor
 from .intent_classifier import IntentClassifier
 from .context_retriever import ContextRetriever
+from .memory_retriever import MemoryRetriever
 
+query_processor = QueryProcessor()
+intent_classifier = IntentClassifier()
+context_retriever = ContextRetriever()
+memory_retriever = MemoryRetriever()
 
 class QueryState(TypedDict):
     """
@@ -14,11 +19,15 @@ class QueryState(TypedDict):
         processed_query: The processed query string
         is_rag_required: Whether RAG search is required for the query
         is_prev_memory_required: Whether previous memory is required for the query
+        user_id: The user ID for retrieving conversation history
+        context: Retrieved context from vector database
+        memory: Retrieved conversation history
     """
     query: str
     processed_query: str
     is_rag_required: bool
     is_prev_memory_required: bool
+    user_id: int
     context: str
     memory: str
 
@@ -33,7 +42,7 @@ def process_query_node(state: QueryState) -> QueryState:
     Returns:
         Updated state with processed_query added
     """
-    query_processor = QueryProcessor()
+    
     processed_query = query_processor.process(state["query"])
     
     return {
@@ -51,7 +60,7 @@ def intent_classifier_node(state: QueryState) -> QueryState:
     Returns:
         Updated state with is_rag_required and is_prev_memory_required set
     """
-    intent_classifier = IntentClassifier()
+    # intent_classifier = IntentClassifier()
     classification = intent_classifier.classify(state["processed_query"])
     
     return {
@@ -60,22 +69,44 @@ def intent_classifier_node(state: QueryState) -> QueryState:
     }
 
 
-# Dummy Node as of Now
 def get_memory_node(state: QueryState) -> QueryState:
     """
-    Node function that retrieves memory/RAG context.
-    This is a placeholder that will be implemented later.
+    Node function that retrieves past conversation history for the user.
     
     Args:
-        state: The current state
+        state: The current state containing user_id
         
     Returns:
-        Updated state (placeholder implementation)
+        Updated state with memory containing past conversation history
     """
-   
-    return {
-        "memory": "memory node called"
-    }
+    # Initialize memory retriever
+    # memory_retriever = MemoryRetriever()
+    
+    # Get user_id from state
+    user_id = state.get("user_id")
+    
+    if user_id is None:
+        # If user_id is not provided, return empty memory
+        return {
+            "memory": ""
+        }
+    
+    try:
+        # Retrieve past conversations for the user
+        past_conversations = memory_retriever.get_past_conversations(user_id)
+        
+        return {
+            "memory": past_conversations
+        }
+    except Exception as e:
+        # If there's an error retrieving memory, return empty string
+        # In production, you might want to log this error
+        return {
+            "memory": ""
+        }
+    finally:
+        # Clean up the database connection
+        memory_retriever.close_connection()
 
 def get_context_node(state: QueryState) -> QueryState:
     """
@@ -88,7 +119,7 @@ def get_context_node(state: QueryState) -> QueryState:
         Updated state with context retrieved from vector database
     """
     # Initialize context retriever
-    context_retriever = ContextRetriever()
+    # context_retriever = ContextRetriever()
     
     # Retrieve context using the processed query
     # retrieve_context returns a list of context strings
@@ -177,12 +208,13 @@ def create_dag():
     return app
 
 
-def run_ka_dag(query: str) -> dict:
+def run_ka_dag(query: str, user_id: int) -> dict:
     """
     Callable function to trigger the query processing DAG.
     
     Args:
         query: The input query string to process
+        user_id: The user ID for retrieving conversation history
         
     Returns:
         Dictionary containing the final state with query and processed_query
@@ -196,6 +228,7 @@ def run_ka_dag(query: str) -> dict:
         "processed_query": "",  # Will be populated by the processing node
         "is_rag_required": False,  # Will be set by the intent classifier
         "is_prev_memory_required": False,  # Will be set by the intent classifier
+        "user_id": user_id,  # User ID for memory retrieval
         "context": "", # Will be populated by the context node
         "memory": "", # Will be populated by the memory node
     }

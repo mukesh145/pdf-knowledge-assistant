@@ -3,6 +3,7 @@ import os
 import numpy as np
 from FlagEmbedding import FlagModel
 from pinecone import Pinecone
+from pathlib import Path
 from .utils import load_config
 
 
@@ -27,7 +28,9 @@ class ContextRetriever:
             Configured FlagModel for embeddings
         """
         # Load configuration
-        config = load_config("configs/backend_config.yaml")
+        project_root = Path(__file__).parent.parent.parent
+        config_path = project_root / "configs" / "backend_config.yaml"
+        config = load_config(config_path)
         
         # Get model name from config
         model_name = config.get("embeddings_model", {}).get("name", "BAAI/bge-m3")
