@@ -4,11 +4,15 @@ from .query_processing import QueryProcessor
 from .intent_classifier import IntentClassifier
 from .context_retriever import ContextRetriever
 from .memory_retriever import MemoryRetriever
+from .llm_orchestrator import LLMOrchestrator
+from .logger import Logger
 
 query_processor = QueryProcessor()
 intent_classifier = IntentClassifier()
 context_retriever = ContextRetriever()
 memory_retriever = MemoryRetriever()
+llm_orchestrator = LLMOrchestrator()
+logger = Logger()
 
 class QueryState(TypedDict):
     """
@@ -22,6 +26,7 @@ class QueryState(TypedDict):
         user_id: The user ID for retrieving conversation history
         context: Retrieved context from vector database
         memory: Retrieved conversation history
+        llm_response: The LLM-generated response to the user's query
     """
     query: str
     processed_query: str
@@ -30,6 +35,7 @@ class QueryState(TypedDict):
     user_id: int
     context: str
     memory: str
+    llm_response: str
 
 
 def process_query_node(state: QueryState) -> QueryState:
@@ -108,6 +114,8 @@ def get_memory_node(state: QueryState) -> QueryState:
         # Clean up the database connection
         memory_retriever.close_connection()
 
+
+
 def get_context_node(state: QueryState) -> QueryState:
     """
     Node function that retrieves context from the vector database using RAG.
@@ -134,6 +142,80 @@ def get_context_node(state: QueryState) -> QueryState:
     }
 
 
+def llm_orchestrator_node(state: QueryState) -> QueryState:
+    """
+    Node function that generates an LLM response using the query, context, and memory.
+    
+    Args:
+        state: The current state containing query, context, and memory
+        
+    Returns:
+        Updated state with llm_response added
+    """
+    # Get the query, context, and memory from state
+    query = state.get("query", "")
+    context = state.get("context", "")
+    memory = state.get("memory", "")
+    
+    # Generate response using LLMOrchestrator
+    # Handle None or empty strings appropriately
+    response = llm_orchestrator.generate_response(
+        query=query,
+        context=context if context else None,
+        past_conversation=memory if memory else None
+    )
+    
+    return {
+        "llm_response": response
+    }
+
+
+def logger_node(state: QueryState) -> QueryState:
+    """
+    Node function that logs the data to the logs db and adds query and llm_response
+    to the conversation_history table.
+    
+    Args:
+        state: The current state containing query, llm_response, and other workflow data
+        
+    Returns:
+        State unchanged (returns empty dict to maintain state as-is)
+    """
+    try:
+        # Get user_id, query, and llm_response from state
+        user_id = state.get("user_id")
+        query = state.get("query", "")
+        llm_response = state.get("llm_response", "")
+        
+        # Save conversation to conversation_history table
+        if user_id is not None and query and llm_response:
+            logger.save_conversation(user_id, query, llm_response)
+        
+        # Prepare state for logs table (maps user_id -> u_id and memory -> past_memory)
+        logs_state = {
+            "u_id": state.get("user_id"),
+            "query": state.get("query", ""),
+            "processed_query": state.get("processed_query", ""),
+            "context": state.get("context", ""),
+            "past_memory": state.get("memory", ""),
+            "llm_response": state.get("llm_response", "")
+        }
+        
+        # Save logs to logs table
+        logger.save_logs(logs_state)
+        
+    except Exception as e:
+        # If there's an error logging, we don't want to fail the workflow
+        # In production, you might want to log this error to a separate error log
+        pass
+    finally:
+        # Clean up the database connection
+        logger.close_connection()
+    
+    # Return empty dict to maintain state as-is
+    return {}
+
+
 def route_after_classification(state: QueryState) -> Union[str, list[str]]:
     """
     Conditional routing function that determines which nodes to execute
@@ -153,9 +235,9 @@ def route_after_classification(state: QueryState) -> Union[str, list[str]]:
     if state.get("is_prev_memory_required", False):
         nodes_to_execute.append("get_memory")
     
-    # If neither is required, go to END
+    # If neither is required, go directly to llm_orchestrator
     if not nodes_to_execute:
-        return END
+        return "llm_orchestrator"
     
     # If only one node is needed, return as string
     if len(nodes_to_execute) == 1:
@@ -180,13 +262,15 @@ def create_dag():
     workflow.add_node("intent_classifier", intent_classifier_node)
     workflow.add_node("get_memory", get_memory_node)
     workflow.add_node("get_context", get_context_node)
+    workflow.add_node("llm_orchestrator", llm_orchestrator_node)
+    workflow.add_node("logger", logger_node)
     
     # Define the flow: START -> process_query -> intent_classifier -> (conditional routing)
     workflow.add_edge(START, "process_query")
     workflow.add_edge("process_query", "intent_classifier")
     
     # Conditional routing after intent classification
-    # Routes to get_memory and/or get_context based on flags, or END if neither is needed
+    # Routes to get_memory and/or get_context based on flags, or llm_orchestrator if neither is needed
     # When both flags are true, both nodes execute in parallel
     workflow.add_conditional_edges(
         "intent_classifier",
@@ -194,13 +278,17 @@ def create_dag():
         {
             "get_memory": "get_memory",
             "get_context": "get_context",
-            END: END
+            "llm_orchestrator": "llm_orchestrator"
         }
     )
     
-    # Both get_memory and get_context can run in parallel and both lead to END
-    workflow.add_edge("get_memory", END)
-    workflow.add_edge("get_context", END)
+    # Both get_memory and get_context can run in parallel and both lead to llm_orchestrator
+    workflow.add_edge("get_memory", "llm_orchestrator")
+    workflow.add_edge("get_context", "llm_orchestrator")
+    
+    # llm_orchestrator leads to logger, and logger is the final node before END
+    workflow.add_edge("llm_orchestrator", "logger")
+    workflow.add_edge("logger", END)
     
     # Compile the graph
     app = workflow.compile()
@@ -231,6 +319,7 @@ def run_ka_dag(query: str, user_id: int) -> dict:
         "user_id": user_id,  # User ID for memory retrieval
         "context": "", # Will be populated by the context node
         "memory": "", # Will be populated by the memory node
+        "llm_response": "", # Will be populated by the llm_orchestrator node
     }
     
     # Run the workflow
