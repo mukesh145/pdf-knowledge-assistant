@@ -1,0 +1,17 @@
+langgraph
+dspy-ai
+openai
+pyyaml
+python-dotenv
+FlagEmbedding
+numpy
+pinecone
+unstructured[pdf]
+psycopg2-binary
+fastapi
+uvicorn[standard]
+pydantic
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt<4.0.0
+python-multipart
