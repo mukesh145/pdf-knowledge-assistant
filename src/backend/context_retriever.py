@@ -16,9 +16,14 @@ class ContextRetriever:
     def __init__(self):
         """
         Initialize the ContextRetriever by loading the embedding model from config.
+        Pinecone index initialization may fail if not configured - this is handled gracefully.
         """
         self.model = self._initialize_embedding_model()
-        self._pinecone_index = self._initialize_pinecone_index()
+        try:
+            self._pinecone_index = self._initialize_pinecone_index()
+        except Exception as e:
+            print(f"WARNING: Pinecone index not initialized: {str(e)}")
+            self._pinecone_index = None
     
     def _initialize_embedding_model(self):
         """
@@ -82,7 +87,11 @@ class ContextRetriever:
         Initialize Pinecone index connection. Uses environment variables for configuration.
         
         Returns:
-            Pinecone Index object
+            Pinecone Index object or None if not configured
+        
+        Raises:
+            ValueError: If PINECONE_API_KEY is not set
+            Exception: If index connection fails
         """
         # Get Pinecone configuration from environment variables
         api_key = os.getenv("PINECONE_API_KEY")
@@ -94,14 +103,20 @@ class ContextRetriever:
                 "Please set it before querying the vector database."
             )
         
-        # Initialize Pinecone client
-        pc = Pinecone(api_key=api_key)
-        
-        # Connect to the index
-        pinecone_index = pc.Index(index_name)
-        
-        return pinecone_index
-    def retrieve_context(self, query: str, top_k: int = 5) -> List[dict]:
+        try:
+            # Initialize Pinecone client
+            pc = Pinecone(api_key=api_key)
+            
+            # Connect to the index
+            pinecone_index = pc.Index(index_name)
+            
+            return pinecone_index
+        except Exception as e:
+            raise Exception(
+                f"Failed to connect to Pinecone index '{index_name}': {str(e)}. "
+                "Please verify your PINECONE_API_KEY and PINECONE_INDEX_NAME are correct."
+            )
+    def retrieve_context(self, query: str, top_k: int = 5) -> List[str]:
         """
         Convert query to embeddings, query the vector DB, and return top results.
         
@@ -110,27 +125,42 @@ class ContextRetriever:
             top_k: Number of top results to retrieve (default: 5)
             
         Returns:
-            List of dictionaries containing the top search results with metadata
+            List of context strings from the top search results
+            
+        Raises:
+            Exception: If Pinecone index is not available or query fails
         """
-        # Step 1: Convert query to embeddings
-        query_embedding = self.convert_to_embeddings(query)
-        
-        # Step 2: Initialize Pinecone index if not already done
-        index = self._pinecone_index
-        
-        # Step 3: Query Pinecone vector database
-        results = index.query(
-            vector=query_embedding.tolist(),
-            top_k=top_k,
-            include_metadata=True
-        )
-
-        # print(results)
-        
-        contexts = []
-        for context in results.get('matches', []):
-            contexts.append(context.get('metadata',"").get('text',""))
-
-        # Step 4: Extract and return the matches
-        return contexts
+        try:
+            # Step 1: Convert query to embeddings
+            query_embedding = self.convert_to_embeddings(query)
+            
+            # Step 2: Get Pinecone index (should be initialized in __init__)
+            if self._pinecone_index is None:
+                raise Exception("Pinecone index is not initialized. Check your PINECONE_API_KEY and PINECONE_INDEX_NAME.")
+            
+            index = self._pinecone_index
+            
+            # Step 3: Query Pinecone vector database
+            results = index.query(
+                vector=query_embedding.tolist(),
+                top_k=top_k,
+                include_metadata=True
+            )
+            
+            # Step 4: Extract context strings from matches
+            contexts = []
+            for match in results.get('matches', []):
+                metadata = match.get('metadata', {})
+                text = metadata.get('text', '')
+                if text:  # Only add non-empty contexts
+                    contexts.append(text)
+            
+            return contexts
+            
+        except Exception as e:
+            # Log the error but don't fail the entire workflow
+            error_msg = str(e)
+            print(f"WARNING: Context retrieval failed: {error_msg}")
+            # Return empty list to allow workflow to continue without context
+            return []
 
