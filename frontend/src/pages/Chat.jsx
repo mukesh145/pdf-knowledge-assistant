@@ -24,28 +24,78 @@ const Chat = () => {
     setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
     setLoading(true);
 
+    // Create a placeholder for the assistant's streaming response
+    const assistantMessageId = Date.now();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        metadata: {
+          contextUsed: false,
+          memoryUsed: false,
+        },
+        streaming: true,
+      },
+    ]);
+
     try {
-      const response = await queryAPI.query(userMessage);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: response.response,
-          metadata: {
-            contextUsed: response.context_used,
-            memoryUsed: response.memory_used,
-          },
-        },
-      ]);
+      let fullResponse = '';
+      let metadata = null;
+
+      // Handle metadata callback
+      const handleMetadata = (meta) => {
+        metadata = meta;
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? {
+                  ...msg,
+                  metadata: {
+                    contextUsed: meta.context_used || false,
+                    memoryUsed: meta.memory_used || false,
+                  },
+                }
+              : msg
+          )
+        );
+      };
+
+      // Stream the response
+      for await (const token of queryAPI.queryStream(userMessage, handleMetadata)) {
+        fullResponse += token;
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? { ...msg, content: fullResponse }
+              : msg
+          )
+        );
+        scrollToBottom();
+      }
+
+      // Mark streaming as complete
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantMessageId
+            ? { ...msg, streaming: false }
+            : msg
+        )
+      );
     } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: `Error: ${error.response?.data?.detail || 'Failed to get response'}`,
-          error: true,
-        },
-      ]);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantMessageId
+            ? {
+                ...msg,
+                content: `Error: ${error.message || 'Failed to get response'}`,
+                error: true,
+                streaming: false,
+              }
+            : msg
+        )
+      );
     } finally {
       setLoading(false);
     }
@@ -65,7 +115,7 @@ const Chat = () => {
         ) : (
           messages.map((message, index) => (
             <div
-              key={index}
+              key={message.id || index}
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
@@ -77,7 +127,12 @@ const Chat = () => {
                     : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 shadow-sm'
                 }`}
               >
-                <p className="whitespace-pre-wrap">{message.content}</p>
+                <p className="whitespace-pre-wrap">
+                  {message.content}
+                  {message.streaming && (
+                    <span className="inline-block w-2 h-4 ml-1 bg-indigo-500 animate-pulse"></span>
+                  )}
+                </p>
                 {message.metadata && (
                   <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
                     {message.metadata.contextUsed && (
