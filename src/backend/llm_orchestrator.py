@@ -1,8 +1,10 @@
 import dspy
 from dotenv import load_dotenv
-from typing import Optional
+from typing import Optional, Iterator
 from dspy import Signature, InputField, OutputField
 from dspy import LM
+import openai
+import os
 
 # Load environment variables from .env file
 load_dotenv()
@@ -98,6 +100,69 @@ class LLMOrchestrator:
         )
         
         return result.answer
+    
+    def generate_response_stream(
+        self, 
+        query: str, 
+        context: Optional[str] = None, 
+        past_conversation: Optional[str] = None
+    ) -> Iterator[str]:
+        """
+        Generate a streaming response to the user's query using OpenAI's streaming API.
+        
+        Args:
+            query: The user's query string
+            context: Retrieved context from the knowledge base (can be None or empty string)
+            past_conversation: Previous conversation history (can be None or empty string)
+            
+        Yields:
+            Token chunks as they are generated
+        """
+        # Handle None values by converting to empty strings
+        context = context if context is not None else ""
+        past_conversation = past_conversation if past_conversation is not None else ""
+        
+        # Generate an appropriate system prompt
+        system_prompt = self._generate_system_prompt(context, past_conversation)
+        
+        # Build messages for OpenAI API
+        messages = [
+            {"role": "system", "content": system_prompt}
+        ]
+        
+        # Add past conversation if available
+        if past_conversation and past_conversation.strip():
+            messages.append({
+                "role": "system", 
+                "content": f"Previous conversation history:\n{past_conversation}"
+            })
+        
+        # Add context if available
+        user_content = query
+        if context and context.strip():
+            user_content = f"Context from knowledge base:\n{context}\n\nUser query: {query}"
+        
+        messages.append({"role": "user", "content": user_content})
+        
+        # Get OpenAI API key
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY not found in environment variables")
+        
+        # Call OpenAI API with streaming
+        client = openai.OpenAI(api_key=api_key)
+        
+        stream = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            stream=True,
+            temperature=0.7
+        )
+        
+        # Yield tokens as they arrive
+        for chunk in stream:
+            if chunk.choices[0].delta.content is not None:
+                yield chunk.choices[0].delta.content
     
     def _generate_system_prompt(self, context: str, past_conversation: str) -> str:
         """
