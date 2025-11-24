@@ -1,4 +1,4 @@
-from typing import TypedDict, Union
+from typing import TypedDict, Union, Iterator
 from langgraph.graph import StateGraph, START, END
 from .query_processing import QueryProcessor
 from .intent_classifier import IntentClassifier
@@ -326,4 +326,100 @@ def run_ka_dag(query: str, user_id: int) -> dict:
     result = app.invoke(initial_state)
     
     return result
+
+
+def run_ka_dag_stream(query: str, user_id: int) -> Iterator[dict]:
+    """
+    Callable function to trigger the query processing DAG with streaming LLM response.
+    
+    This function processes the query up to the LLM generation step, then streams
+    the response token by token instead of waiting for the complete response.
+    
+    Args:
+        query: The input query string to process
+        user_id: The user ID for retrieving conversation history
+        
+    Yields:
+        Dictionary chunks containing streaming response data:
+        - {"type": "metadata", "data": {...}} - Query processing metadata
+        - {"type": "token", "data": "..."} - Individual tokens from LLM
+        - {"type": "done", "data": {}} - Stream completion signal
+    """
+    # Initial state
+    state = {
+        "query": query,
+        "processed_query": "",
+        "is_rag_required": False,
+        "is_prev_memory_required": False,
+        "user_id": user_id,
+        "context": "",
+        "memory": "",
+        "llm_response": "",
+    }
+    
+    # Process query
+    state.update(process_query_node(state))
+    
+    # Classify intent
+    state.update(intent_classifier_node(state))
+    
+    # Get memory if needed
+    if state.get("is_prev_memory_required", False):
+        state.update(get_memory_node(state))
+    
+    # Get context if needed
+    if state.get("is_rag_required", False):
+        state.update(get_context_node(state))
+    
+    # First, yield metadata about the query processing
+    yield {
+        "type": "metadata",
+        "data": {
+            "query": state.get("query", query),
+            "processed_query": state.get("processed_query"),
+            "context_used": state.get("is_rag_required", False),
+            "memory_used": state.get("is_prev_memory_required", False)
+        }
+    }
+    
+    # Stream LLM response
+    query_text = state.get("query", "")
+    context_text = state.get("context", "")
+    memory_text = state.get("memory", "")
+    
+    full_response = ""
+    try:
+        for token in llm_orchestrator.generate_response_stream(
+            query=query_text,
+            context=context_text if context_text else None,
+            past_conversation=memory_text if memory_text else None
+        ):
+            full_response += token
+            yield {
+                "type": "token",
+                "data": token
+            }
+    except Exception as e:
+        # Yield error if streaming fails
+        yield {
+            "type": "error",
+            "data": {"message": str(e)}
+        }
+        return
+    
+    # Update state with full response for logging
+    state["llm_response"] = full_response
+    
+    # Log the conversation (run logger node)
+    try:
+        logger_node(state)
+    except Exception as e:
+        # Don't fail if logging fails, but log the error
+        print(f"Warning: Failed to log conversation: {e}")
+    
+    # Yield final message
+    yield {
+        "type": "done",
+        "data": {}
+    }
 

@@ -75,6 +75,72 @@ export const queryAPI = {
     const response = await api.post('/query', { query });
     return response.data;
   },
+
+  queryStream: async function* (query, onMetadata) {
+    const token = localStorage.getItem('access_token');
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+    
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/query/stream`, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({ query }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    try {
+      let buffer = '';
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.type === 'metadata' && onMetadata) {
+                onMetadata(data.data);
+              } else if (data.type === 'token') {
+                yield data.data;
+              } else if (data.type === 'error') {
+                throw new Error(data.data.message || 'An error occurred');
+              } else if (data.type === 'done') {
+                return;
+              }
+            } catch (e) {
+              // If JSON parsing fails, it might be a non-JSON line, skip it
+              if (e instanceof SyntaxError) {
+                continue;
+              }
+              console.error('Error parsing SSE data:', e);
+              throw e;
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  },
 };
 
 export default api;
