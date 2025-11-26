@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Optional
 from unstructured.partition.pdf import partition_pdf
 
-from src.backend.query_processing import QueryProcessor
+from src.agent.query_processing import QueryProcessor
 from src.knowledge.post_processor import PostProcessor
 
 
