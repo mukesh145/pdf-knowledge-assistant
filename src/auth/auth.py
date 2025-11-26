@@ -51,7 +51,8 @@ except (AttributeError, ImportError, Exception) as e:
 # JWT Configuration
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60  # 30 days
+# Token expiration: 3 hours (180 minutes)
+ACCESS_TOKEN_EXPIRE_MINUTES = 180
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -128,6 +129,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     
+    # Debug: Log expiration time
+    print(f"DEBUG: Creating token with expiration: {expire} (in {ACCESS_TOKEN_EXPIRE_MINUTES} minutes from now)")
+    
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -137,9 +141,27 @@ def decode_access_token(token: str) -> Optional[dict]:
     """Decode and validate a JWT token."""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # Debug: Log token expiration info
+        if "exp" in payload:
+            exp_timestamp = payload["exp"]
+            exp_datetime = datetime.utcfromtimestamp(exp_timestamp)  # Use UTC for consistency
+            now = datetime.utcnow()
+            time_remaining = exp_datetime - now
+            print(f"DEBUG: Token valid. Expires at: {exp_datetime} UTC, Time remaining: {time_remaining}")
         return payload
     except JWTError as e:
-        print(f"DEBUG: JWT decode error: {type(e).__name__}: {str(e)}")
+        error_msg = str(e)
+        print(f"DEBUG: JWT decode error: {type(e).__name__}: {error_msg}")
+        # Try to decode without verification to see expiration
+        try:
+            unverified = jwt.decode(token, options={"verify_signature": False})
+            if "exp" in unverified:
+                exp_timestamp = unverified["exp"]
+                exp_datetime = datetime.utcfromtimestamp(exp_timestamp)  # Use UTC for consistency
+                now = datetime.utcnow()
+                print(f"DEBUG: Token expiration was: {exp_datetime} UTC, Current time: {now} UTC, Expired: {exp_datetime < now}")
+        except:
+            pass
         return None
     except Exception as e:
         print(f"DEBUG: Unexpected error decoding token: {type(e).__name__}: {str(e)}")

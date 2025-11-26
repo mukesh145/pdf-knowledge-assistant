@@ -9,18 +9,18 @@ import os
 import json
 from pathlib import Path
 
-# Add the src directory to the path to import backend modules
+# Add the src directory to the path to import agent and auth modules
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 try:
-    from backend.orchestrator import run_ka_dag, run_ka_dag_stream
-    from backend.auth import create_access_token, decode_access_token
-    from backend.user_manager import UserManager
-    from backend.db_setup import DatabaseSetup
-    print("✓ Successfully imported backend modules")
+    from agent.orchestrator import run_ka_dag, run_ka_dag_stream
+    from auth.auth import create_access_token, decode_access_token
+    from auth.user_manager import UserManager
+    from agent.db_setup import DatabaseSetup
+    print("✓ Successfully imported agent and auth modules")
 except ImportError as e:
-    print(f"✗ Error importing backend modules: {e}")
+    print(f"✗ Error importing agent and auth modules: {e}")
     import traceback
     print(traceback.format_exc())
     raise
@@ -223,24 +223,32 @@ async def get_current_user(
         payload = decode_access_token(token)
         
         if payload is None:
+            print(f"DEBUG: Token decode returned None")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired authentication token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
+        print(f"DEBUG: Token payload decoded successfully: {payload}")
+        
         user_id_str = payload.get("sub")
         if user_id_str is None:
+            print(f"DEBUG: No 'sub' field in token payload. Payload keys: {payload.keys()}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication token format",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
+        print(f"DEBUG: Extracted user_id from token: {user_id_str} (type: {type(user_id_str)})")
+        
         # Convert string user_id back to integer
         try:
             user_id: int = int(user_id_str)
-        except (ValueError, TypeError):
+            print(f"DEBUG: Converted user_id to int: {user_id}")
+        except (ValueError, TypeError) as e:
+            print(f"DEBUG: Failed to convert user_id to int: {e}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication token format",
@@ -248,13 +256,29 @@ async def get_current_user(
             )
         
         # Get user from the 'users' table by ID
-        user = user_manager.get_user_by_id(user_id)
+        print(f"DEBUG: Attempting to get user by ID: {user_id}")
+        try:
+            user = user_manager.get_user_by_id(user_id)
+            print(f"DEBUG: get_user_by_id returned: {user}")
+        except Exception as e:
+            print(f"DEBUG: Exception in get_user_by_id: {type(e).__name__}: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Database error: {str(e)}",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
         if user is None:
+            print(f"DEBUG: User not found in database for user_id: {user_id}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        
+        print(f"DEBUG: User found successfully: {user.get('email', 'N/A')}")
         
         return user
     except HTTPException:
@@ -433,6 +457,50 @@ async def login(request: LoginRequest):
 async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     """Get current user information."""
     return UserResponse(**current_user)
+
+
+@app.get("/auth/token-info")
+async def get_token_info(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+):
+    """Debug endpoint to check token expiration information."""
+    try:
+        token = None
+        auth_header = request.headers.get("Authorization")
+        
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        elif credentials and credentials.credentials:
+            token = credentials.credentials
+        
+        if not token:
+            return {"error": "No token provided"}
+        
+        # Decode without verification to get expiration info
+        from jose import jwt as jose_jwt
+        from datetime import datetime
+        unverified = jose_jwt.decode(token, options={"verify_signature": False})
+        
+        exp_timestamp = unverified.get("exp")
+        if exp_timestamp:
+            exp_datetime = datetime.fromtimestamp(exp_timestamp)
+            now = datetime.utcnow()
+            time_remaining_seconds = (exp_datetime - now).total_seconds()
+            time_remaining_minutes = time_remaining_seconds / 60
+            
+            return {
+                "token_expires_at": exp_datetime.isoformat(),
+                "current_time": now.isoformat(),
+                "time_remaining_minutes": round(time_remaining_minutes, 2),
+                "time_remaining_hours": round(time_remaining_minutes / 60, 2),
+                "is_expired": exp_datetime < now,
+                "user_id": unverified.get("sub")
+            }
+        else:
+            return {"error": "No expiration in token"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.post("/query", response_model=QueryResponse)

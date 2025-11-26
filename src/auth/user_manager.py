@@ -20,27 +20,45 @@ class UserManager:
     
     def _get_db_connection(self):
         """Create and return a database connection using environment variables."""
-        if self._db_connection is None or self._db_connection.closed:
-            db_host = os.getenv("DB_HOST")
-            db_port = os.getenv("DB_PORT", "5432")
-            db_name = os.getenv("DB_NAME")
-            db_user = os.getenv("DB_USER")
-            db_password = os.getenv("DB_PASSWORD")
-            
-            if not all([db_host, db_name, db_user, db_password]):
-                raise ValueError(
-                    "Database connection parameters are missing. "
-                    "Please set DB_HOST, DB_NAME, DB_USER, and DB_PASSWORD environment variables."
-                )
-            
-            self._db_connection = psycopg2.connect(
-                host=db_host,
-                port=db_port,
-                database=db_name,
-                user=db_user,
-                password=db_password
+        # Check if connection exists and is valid
+        if self._db_connection is not None and not self._db_connection.closed:
+            try:
+                # Test if connection is still alive by executing a simple query
+                cursor = self._db_connection.cursor()
+                cursor.execute("SELECT 1")
+                cursor.close()
+                return self._db_connection
+            except (psycopg2.OperationalError, psycopg2.InterfaceError):
+                # Connection is dead, reset it
+                print("DEBUG: Database connection is dead, creating new connection")
+                try:
+                    self._db_connection.close()
+                except:
+                    pass
+                self._db_connection = None
+        
+        # Create new connection
+        db_host = os.getenv("DB_HOST")
+        db_port = os.getenv("DB_PORT", "5432")
+        db_name = os.getenv("DB_NAME")
+        db_user = os.getenv("DB_USER")
+        db_password = os.getenv("DB_PASSWORD")
+        
+        if not all([db_host, db_name, db_user, db_password]):
+            raise ValueError(
+                "Database connection parameters are missing. "
+                "Please set DB_HOST, DB_NAME, DB_USER, and DB_PASSWORD environment variables."
             )
-            self._db_connection.autocommit = False
+        
+        print(f"DEBUG: Creating new database connection to {db_host}:{db_port}/{db_name}")
+        self._db_connection = psycopg2.connect(
+            host=db_host,
+            port=db_port,
+            database=db_name,
+            user=db_user,
+            password=db_password
+        )
+        self._db_connection.autocommit = False
         
         return self._db_connection
     
@@ -141,27 +159,46 @@ class UserManager:
     
     def get_user_by_id(self, user_id: int) -> Optional[Dict]:
         """Get user by ID."""
-        conn = self._get_db_connection()
-        cursor = conn.cursor()
-        
         try:
-            cursor.execute(
-                "SELECT id, email, full_name, created_at FROM users WHERE id = %s",
-                (user_id,)
-            )
-            result = cursor.fetchone()
+            conn = self._get_db_connection()
+            cursor = conn.cursor()
             
-            if not result:
-                return None
-            
-            return {
-                "id": result[0],
-                "email": result[1],
-                "full_name": result[2],
-                "created_at": result[3].isoformat() if result[3] else None
-            }
-        finally:
-            cursor.close()
+            try:
+                cursor.execute(
+                    "SELECT id, email, full_name, created_at FROM users WHERE id = %s",
+                    (user_id,)
+                )
+                result = cursor.fetchone()
+                
+                if not result:
+                    print(f"DEBUG: No user found with ID: {user_id}")
+                    return None
+                
+                user_dict = {
+                    "id": result[0],
+                    "email": result[1],
+                    "full_name": result[2],
+                    "created_at": result[3].isoformat() if result[3] else None
+                }
+                print(f"DEBUG: User found: {user_dict.get('email', 'N/A')}")
+                return user_dict
+            finally:
+                cursor.close()
+        except psycopg2.Error as e:
+            print(f"DEBUG: Database error in get_user_by_id: {type(e).__name__}: {str(e)}")
+            # Reset connection on error
+            if self._db_connection and not self._db_connection.closed:
+                try:
+                    self._db_connection.close()
+                except:
+                    pass
+            self._db_connection = None
+            raise
+        except Exception as e:
+            print(f"DEBUG: Unexpected error in get_user_by_id: {type(e).__name__}: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            raise
     
     def close_connection(self):
         """Close the database connection."""
