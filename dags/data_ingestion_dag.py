@@ -2,6 +2,7 @@
 from airflow.decorators import dag, task
 from datetime import datetime, timedelta
 import sys
+import yaml
 from pathlib import Path
 
 
@@ -10,6 +11,20 @@ default_args = {
     "retries": 1,
     "retry_delay": timedelta(minutes=2),
 }
+
+# Load configuration from YAML file
+def load_config():
+    """Load configuration from YAML file."""
+    config_path = Path(__file__).parent.parent / "configs" / "data_ingestion_config.yaml"
+    if not config_path.exists():
+        # Fallback to airflow config path
+        config_path = Path("/opt/airflow/configs/data_ingestion_config.yaml")
+    
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+# Load config once at module level
+CONFIG = load_config()
 
 @dag(
     start_date=datetime(2025, 10, 10),
@@ -33,7 +48,16 @@ def data_ingestion_pipeline():
 
         from knowledge.fetch_data import fetch_pdfs_from_s3
         
-        return fetch_pdfs_from_s3()
+        # Get S3 configuration from config file
+        bucket_name = CONFIG.get("s3", {}).get("bucket_name", "knowledge-assistant-project")
+        s3_prefix = CONFIG.get("s3", {}).get("source_prefix", "raw-pdf-data/")
+        data_dir = CONFIG.get("data", {}).get("directory", "/opt/airflow/data")
+        
+        return fetch_pdfs_from_s3(
+            bucket_name=bucket_name,
+            s3_prefix=s3_prefix,
+            data_dir=data_dir
+        )
     
     @task
     def extract_data(data_dir_path):
@@ -71,8 +95,12 @@ def data_ingestion_pipeline():
         
         print(f"Found {len(pdf_files)} PDF file(s) to extract")
         
+        # Get extraction configuration from config file
+        enable_post_processing = CONFIG.get("extraction", {}).get("enable_post_processing", True)
+        verbose = CONFIG.get("extraction", {}).get("verbose", True)
+        
         # Initialize extractor with post-processing enabled
-        extractor = Extractor(enable_post_processing=True, verbose=True)
+        extractor = Extractor(enable_post_processing=enable_post_processing, verbose=verbose)
         
         # Extract text from each PDF
         extraction_results = {}
@@ -154,8 +182,10 @@ def data_ingestion_pipeline():
         
         # Initialize chunker with default parameters
         chunker = Chunker()
-        chunk_size = 300  # words per chunk
-        overlap = 50      # overlapping words
+        
+        # Get chunking configuration from config file
+        chunk_size = CONFIG.get("chunking", {}).get("chunk_size", 300)
+        overlap = CONFIG.get("chunking", {}).get("overlap", 50)
         
         print(f"Chunking with parameters: chunk_size={chunk_size}, overlap={overlap}")
         
@@ -278,7 +308,8 @@ def data_ingestion_pipeline():
         query_processor = QueryProcessor()
         context_retriever = ContextRetriever()
         
-        batch_size = 100  # Process embeddings in batches to avoid memory issues
+        # Get embedding batch size from config file
+        batch_size = CONFIG.get("embeddings", {}).get("batch_size", 100)
         
         print(f"Converting chunks to embeddings (batch_size={batch_size})...")
         
@@ -434,10 +465,16 @@ def data_ingestion_pipeline():
         upserted_dir = data_dir / "upserted"
         upserted_dir.mkdir(parents=True, exist_ok=True)
         
-        # Get Pinecone configuration from environment variables
+        # Get Pinecone configuration
+        # API key from environment (sensitive)
         pinecone_api_key = os.getenv("PINECONE_API_KEY")
-        pinecone_index_name = os.getenv("PINECONE_INDEX_NAME", "pdf-knowledge-base")
-        pinecone_environment = os.getenv("PINECONE_ENVIRONMENT", "us-east-1")
+        # Other config from YAML file
+        pinecone_config = CONFIG.get("pinecone", {})
+        pinecone_index_name = os.getenv("PINECONE_INDEX_NAME", pinecone_config.get("index_name", "pdf-knowledge-base"))
+        pinecone_environment = os.getenv("PINECONE_ENVIRONMENT", pinecone_config.get("environment", "us-east-1"))
+        dimension = pinecone_config.get("dimension", 1024)
+        metric = pinecone_config.get("metric", "cosine")
+        cloud = pinecone_config.get("cloud", "aws")
         
         if not pinecone_api_key:
             raise ValueError(
@@ -454,10 +491,10 @@ def data_ingestion_pipeline():
             print(f"Creating new Pinecone index: {pinecone_index_name}")
             pc.create_index(
                 name=pinecone_index_name,
-                dimension=1024,  # BAAI/bge-m3 model dimension
-                metric="cosine",
+                dimension=dimension,
+                metric=metric,
                 spec=ServerlessSpec(
-                    cloud="aws",
+                    cloud=cloud,
                     region=pinecone_environment
                 )
             )
@@ -469,7 +506,8 @@ def data_ingestion_pipeline():
         index = pc.Index(pinecone_index_name)
         print(f"✓ Connected to index: {pinecone_index_name}")
         
-        batch_size = 100  # Upsert in batches to avoid memory issues
+        # Get upsert batch size from config file
+        batch_size = pinecone_config.get("upsert_batch_size", 100)
         
         print(f"\nUpserting embeddings to Pinecone (batch_size={batch_size})...")
         
@@ -607,10 +645,11 @@ def data_ingestion_pipeline():
             region_name=aws_region
         )
         
-        # Configuration
-        bucket_name = os.getenv("S3_BUCKET_NAME", "knowledge-assistant-project")
-        source_prefix = "raw-pdf-data/"
-        destination_prefix = "processed-pdf-data/"
+        # Get S3 configuration from config file
+        s3_config = CONFIG.get("s3", {})
+        bucket_name = os.getenv("S3_BUCKET_NAME", s3_config.get("bucket_name", "knowledge-assistant-project"))
+        source_prefix = s3_config.get("source_prefix", "raw-pdf-data/")
+        destination_prefix = s3_config.get("destination_prefix", "processed-pdf-data/")
         
         print(f"Connecting to S3 bucket: {bucket_name}")
         print(f"Moving PDFs from: {source_prefix} to {destination_prefix}")

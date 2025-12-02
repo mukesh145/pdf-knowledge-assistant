@@ -4,40 +4,19 @@ Database setup module for creating all required tables.
 import os
 import psycopg2
 from typing import Optional
+from .db_connection_manager import get_connection_manager
 
 
 class DatabaseSetup:
     """Handles creation of all database tables required by the application."""
     
     def __init__(self):
-        """Initialize the DatabaseSetup with database connection parameters."""
-        self._db_connection = None
+        """Initialize the DatabaseSetup with database connection manager."""
+        self._connection_manager = get_connection_manager()
     
     def _get_db_connection(self):
-        """Create and return a database connection using environment variables."""
-        if self._db_connection is None or self._db_connection.closed:
-            db_host = os.getenv("DB_HOST")
-            db_port = os.getenv("DB_PORT", "5432")
-            db_name = os.getenv("DB_NAME")
-            db_user = os.getenv("DB_USER")
-            db_password = os.getenv("DB_PASSWORD")
-            
-            if not all([db_host, db_name, db_user, db_password]):
-                raise ValueError(
-                    "Database connection parameters are missing. "
-                    "Please set DB_HOST, DB_NAME, DB_USER, and DB_PASSWORD environment variables."
-                )
-            
-            self._db_connection = psycopg2.connect(
-                host=db_host,
-                port=db_port,
-                database=db_name,
-                user=db_user,
-                password=db_password
-            )
-            self._db_connection.autocommit = False
-        
-        return self._db_connection
+        """Get a database connection using the connection manager (with failover)."""
+        return self._connection_manager.get_connection()
     
     def table_exists(self, table_name: str) -> bool:
         """
@@ -65,19 +44,19 @@ class DatabaseSetup:
         finally:
             cursor.close()
     
-    def create_all_tables(self):
+    def _create_tables_on_connection(self, conn, db_type: str):
         """
-        Create all required database tables if they don't exist.
+        Create all tables on a specific database connection.
         
-        Safe to run on existing databases - uses IF NOT EXISTS to avoid errors.
-        Existing tables and data will not be affected.
+        Args:
+            conn: Database connection
+            db_type: Type of database ('rds' or 'local')
         """
-        conn = self._get_db_connection()
         cursor = conn.cursor()
         
         try:
             # Check and create users table
-            users_exists = self.table_exists("users")
+            users_exists = self._table_exists_on_connection(conn, "users")
             create_users_table = """
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -90,12 +69,12 @@ class DatabaseSetup:
             """
             cursor.execute(create_users_table)
             if users_exists:
-                print("✓ Users table already exists (verified)")
+                print(f"✓ [{db_type.upper()}] Users table already exists (verified)")
             else:
-                print("✓ Users table created")
+                print(f"✓ [{db_type.upper()}] Users table created")
             
             # Check and create conversation_history table
-            conv_exists = self.table_exists("conversation_history")
+            conv_exists = self._table_exists_on_connection(conn, "conversation_history")
             create_conversation_history_table = """
             CREATE TABLE IF NOT EXISTS conversation_history (
                 id SERIAL PRIMARY KEY,
@@ -107,12 +86,12 @@ class DatabaseSetup:
             """
             cursor.execute(create_conversation_history_table)
             if conv_exists:
-                print("✓ Conversation_history table already exists (verified)")
+                print(f"✓ [{db_type.upper()}] Conversation_history table already exists (verified)")
             else:
-                print("✓ Conversation_history table created")
+                print(f"✓ [{db_type.upper()}] Conversation_history table created")
             
             # Check and create logs table
-            logs_exists = self.table_exists("logs")
+            logs_exists = self._table_exists_on_connection(conn, "logs")
             create_logs_table = """
             CREATE TABLE IF NOT EXISTS logs (
                 id SERIAL PRIMARY KEY,
@@ -127,24 +106,105 @@ class DatabaseSetup:
             """
             cursor.execute(create_logs_table)
             if logs_exists:
-                print("✓ Logs table already exists (verified)")
+                print(f"✓ [{db_type.upper()}] Logs table already exists (verified)")
             else:
-                print("✓ Logs table created")
+                print(f"✓ [{db_type.upper()}] Logs table created")
             
             conn.commit()
             
         except psycopg2.Error as e:
             conn.rollback()
-            raise Exception(f"Database error while creating tables: {e}")
+            raise Exception(f"Database error while creating tables on {db_type}: {e}")
         except Exception as e:
             conn.rollback()
-            raise Exception(f"Error creating tables: {e}")
+            raise Exception(f"Error creating tables on {db_type}: {e}")
         finally:
             cursor.close()
     
+    def _table_exists_on_connection(self, conn, table_name: str) -> bool:
+        """
+        Check if a table exists on a specific connection.
+        
+        Args:
+            conn: Database connection
+            table_name: Name of the table to check
+            
+        Returns:
+            True if table exists, False otherwise
+        """
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = %s
+                );
+            """, (table_name,))
+            exists = cursor.fetchone()[0]
+            return exists
+        finally:
+            cursor.close()
+    
+    def create_all_tables(self):
+        """
+        Create all required database tables on both RDS and local databases.
+        
+        Safe to run on existing databases - uses IF NOT EXISTS to avoid errors.
+        Existing tables and data will not be affected.
+        """
+        # Create tables on the active database (via connection manager)
+        try:
+            conn = self._get_db_connection()
+            db_type = self._connection_manager.get_current_db_type() or 'unknown'
+            self._create_tables_on_connection(conn, db_type)
+        except Exception as e:
+            print(f"⚠ Warning: Failed to create tables on active database: {e}")
+        
+        # Also create tables on local standby database (always ensure it's set up)
+        try:
+            standby_conn = self._connection_manager.get_standby_connection()
+            self._create_tables_on_connection(standby_conn, 'local')
+            standby_conn.close()
+        except Exception as e:
+            print(f"⚠ Warning: Failed to create tables on local standby database: {e}")
+        
+        # Try to create tables on RDS if available (for schema sync)
+        # This ensures both databases have the same schema
+        try:
+            import os
+            import psycopg2
+            db_host = os.getenv("DB_HOST")
+            db_port = os.getenv("DB_PORT", "5432")
+            db_name = os.getenv("DB_NAME")
+            db_user = os.getenv("DB_USER")
+            db_password = os.getenv("DB_PASSWORD")
+            
+            if all([db_host, db_name, db_user, db_password]):
+                rds_conn = psycopg2.connect(
+                    host=db_host,
+                    port=db_port,
+                    database=db_name,
+                    user=db_user,
+                    password=db_password,
+                    connect_timeout=3
+                )
+                rds_conn.autocommit = False
+                self._create_tables_on_connection(rds_conn, 'rds')
+                rds_conn.close()
+        except Exception as e:
+            print(f"⚠ Warning: Failed to create tables on RDS (may be unavailable): {e}")
+    
+    def get_active_db_type(self) -> Optional[str]:
+        """
+        Get the type of database currently active.
+        
+        Returns:
+            'rds', 'local', or None
+        """
+        return self._connection_manager.get_current_db_type()
+    
     def close_connection(self):
         """Close the database connection if it exists."""
-        if self._db_connection and not self._db_connection.closed:
-            self._db_connection.close()
-            self._db_connection = None
+        self._connection_manager.close_connection()
 

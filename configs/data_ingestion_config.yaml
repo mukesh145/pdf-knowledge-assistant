@@ -1,0 +1,37 @@
+# Data Ingestion Pipeline Configuration
+# This file contains all configuration variables for the data ingestion pipeline
+# (excluding sensitive keys and AWS region which are in .env)
+
+# S3 Configuration
+s3:
+  bucket_name: "knowledge-assistant-project"
+  source_prefix: "raw-pdf-data/"
+  destination_prefix: "processed-pdf-data/"
+
+# Data Directory Configuration
+data:
+  directory: "/opt/airflow/data"
+
+# Text Extraction Configuration
+extraction:
+  enable_post_processing: true
+  verbose: true
+
+# Chunking Configuration
+chunking:
+  chunk_size: 300  # words per chunk
+  overlap: 50      # overlapping words
+
+# Embedding Configuration
+embeddings:
+  batch_size: 100  # Process embeddings in batches to avoid memory issues
+
+# Pinecone Configuration
+pinecone:
+  index_name: "pdf-knowledge-base"
+  environment: "us-east-1"
+  dimension: 1024  # BAAI/bge-m3 model dimension
+  metric: "cosine"
+  cloud: "aws"
+  upsert_batch_size: 100  # Upsert in batches to avoid memory issues
+
