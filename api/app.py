@@ -91,10 +91,17 @@ async def startup_event():
         validate_environment_variables()
         print("✓ Environment variables validated")
         
-        # Create all database tables (safe for existing databases)
+        # Create all database tables on both RDS and local databases
         # Uses IF NOT EXISTS - won't affect existing tables or data
+        print("📊 Initializing database schemas...")
         db_setup.create_all_tables()
-        print("✓ Database setup complete")
+        
+        # Log which database is currently active
+        active_db = db_setup.get_active_db_type()
+        if active_db:
+            print(f"✓ Database setup complete - Active database: {active_db.upper()}")
+        else:
+            print("✓ Database setup complete - No active connection yet")
         
         # Print registered routes for debugging
         print(f"✓ Registered {len(app.routes)} routes")
@@ -110,6 +117,7 @@ async def startup_event():
         import traceback
         print(traceback.format_exc())
         # Don't raise - allow app to start, but log the error
+        # The app can still function with local database even if RDS setup fails
 
 
 # Authentication Models
@@ -333,8 +341,12 @@ async def health_check():
     
     # Check database connection
     try:
-        db_setup._get_db_connection()
-        health_status["dependencies"]["database"] = "connected"
+        conn = db_setup._get_db_connection()
+        active_db = db_setup.get_active_db_type()
+        db_status = "connected"
+        if active_db:
+            db_status = f"connected ({active_db.upper()})"
+        health_status["dependencies"]["database"] = db_status
     except Exception as e:
         health_status["status"] = "unhealthy"
         health_status["dependencies"]["database"] = f"error: {str(e)}"

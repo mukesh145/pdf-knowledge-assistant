@@ -5,6 +5,14 @@ import os
 import psycopg2
 from typing import Optional, Dict
 import warnings
+import sys
+from pathlib import Path
+
+# Add the src directory to the path to import agent modules
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root / "src"))
+
+from agent.db_connection_manager import get_connection_manager
 
 # Suppress bcrypt version warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="passlib")
@@ -15,52 +23,12 @@ class UserManager:
     """Manages user operations including registration, authentication, and retrieval."""
     
     def __init__(self):
-        """Initialize the UserManager with database connection parameters."""
-        self._db_connection = None
+        """Initialize the UserManager with database connection manager."""
+        self._connection_manager = get_connection_manager()
     
     def _get_db_connection(self):
-        """Create and return a database connection using environment variables."""
-        # Check if connection exists and is valid
-        if self._db_connection is not None and not self._db_connection.closed:
-            try:
-                # Test if connection is still alive by executing a simple query
-                cursor = self._db_connection.cursor()
-                cursor.execute("SELECT 1")
-                cursor.close()
-                return self._db_connection
-            except (psycopg2.OperationalError, psycopg2.InterfaceError):
-                # Connection is dead, reset it
-                print("DEBUG: Database connection is dead, creating new connection")
-                try:
-                    self._db_connection.close()
-                except:
-                    pass
-                self._db_connection = None
-        
-        # Create new connection
-        db_host = os.getenv("DB_HOST")
-        db_port = os.getenv("DB_PORT", "5432")
-        db_name = os.getenv("DB_NAME")
-        db_user = os.getenv("DB_USER")
-        db_password = os.getenv("DB_PASSWORD")
-        
-        if not all([db_host, db_name, db_user, db_password]):
-            raise ValueError(
-                "Database connection parameters are missing. "
-                "Please set DB_HOST, DB_NAME, DB_USER, and DB_PASSWORD environment variables."
-            )
-        
-        print(f"DEBUG: Creating new database connection to {db_host}:{db_port}/{db_name}")
-        self._db_connection = psycopg2.connect(
-            host=db_host,
-            port=db_port,
-            database=db_name,
-            user=db_user,
-            password=db_password
-        )
-        self._db_connection.autocommit = False
-        
-        return self._db_connection
+        """Get a database connection using the connection manager (with failover)."""
+        return self._connection_manager.get_connection()
     
     def create_user_table_if_not_exists(self):
         """Create the users table if it doesn't exist."""
@@ -186,13 +154,6 @@ class UserManager:
                 cursor.close()
         except psycopg2.Error as e:
             print(f"DEBUG: Database error in get_user_by_id: {type(e).__name__}: {str(e)}")
-            # Reset connection on error
-            if self._db_connection and not self._db_connection.closed:
-                try:
-                    self._db_connection.close()
-                except:
-                    pass
-            self._db_connection = None
             raise
         except Exception as e:
             print(f"DEBUG: Unexpected error in get_user_by_id: {type(e).__name__}: {str(e)}")
@@ -202,7 +163,5 @@ class UserManager:
     
     def close_connection(self):
         """Close the database connection."""
-        if self._db_connection and not self._db_connection.closed:
-            self._db_connection.close()
-            self._db_connection = None
+        self._connection_manager.close_connection()
 

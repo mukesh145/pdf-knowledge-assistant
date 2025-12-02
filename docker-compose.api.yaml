@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: pdf-knowledge-assistant-api
+    ports:
+      - "8000:8000"
+      - "5433:5432"  # Optional: expose local PostgreSQL port for debugging
+    environment:
+      # RDS Configuration (primary database)
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      
+      # Standby Database Configuration (local PostgreSQL in container)
+      DB_STANDBY_HOST: ${DB_STANDBY_HOST:-localhost}
+      DB_STANDBY_PORT: ${DB_STANDBY_PORT:-5432}
+      DB_STANDBY_NAME: ${DB_STANDBY_NAME:-app_standby}
+      DB_STANDBY_USER: ${DB_STANDBY_USER:-app_user}
+      DB_STANDBY_PASSWORD: ${DB_STANDBY_PASSWORD:-app_password}
+      
+      # JWT authentication
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      
+      # OpenAI configuration
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      
+      # Pinecone configuration
+      PINECONE_API_KEY: ${PINECONE_API_KEY}
+      PINECONE_INDEX_NAME: ${PINECONE_INDEX_NAME:-test}
+      PINECONE_ENVIRONMENT: ${PINECONE_ENVIRONMENT:-us-east-1}
+      
+      # CORS configuration
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173}
+    volumes:
+      - ./api:/app/api
+      - ./src:/app/src
+      - ./configs:/app/configs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: pdf-knowledge-assistant-frontend
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
