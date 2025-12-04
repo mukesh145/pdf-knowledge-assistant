@@ -182,3 +182,5 @@ Before deploying to production:
 4. **Database**: Ensure PostgreSQL is properly configured and accessible
 5. **Pinecone**: Verify your Pinecone index is set up and accessible
 6. **Monitoring**: Consider adding logging and monitoring (e.g., Sentry, CloudWatch)
+
+
