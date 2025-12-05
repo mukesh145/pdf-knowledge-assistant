@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
@@ -31,6 +31,9 @@ app = FastAPI(
     description="RAG-based knowledge assistant API for querying PDF documents",
     version="1.0.0"
 )
+
+# Create API router with /api prefix
+api_router = APIRouter()
 
 # CORS configuration - use environment variable or default to localhost for development
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
@@ -304,7 +307,7 @@ async def get_current_user(
         )
 
 
-@app.get("/")
+@api_router.get("/")
 async def root():
     """Root endpoint to check if the API is running."""
     # Get all registered routes for debugging
@@ -314,19 +317,19 @@ async def root():
         "version": "1.0.0",
         "endpoints": {
             "auth": {
-                "register": "/auth/register",
-                "login": "/auth/login",
-                "me": "/auth/me"
+                "register": "/api/auth/register",
+                "login": "/api/auth/login",
+                "me": "/api/auth/me"
             },
-            "query": "/query",
-            "query_stream": "/query/stream",
-            "health": "/health"
+            "query": "/api/query",
+            "query_stream": "/api/query/stream",
+            "health": "/api/health"
         },
         "registered_routes": routes
     }
 
 
-@app.get("/health")
+@api_router.get("/health")
 async def health_check():
     """
     Health check endpoint that validates all dependencies.
@@ -375,14 +378,14 @@ async def health_check():
 
 # Authentication Endpoints
 # Test route to verify routing works
-@app.get("/auth/test")
+@api_router.get("/auth/test")
 async def auth_test():
     """Test endpoint to verify auth routes are registered."""
     return {"message": "Auth routes are working", "status": "ok"}
 
 # Register route - this print confirms the route decorator is executed
 print("Registering /auth/register route...")
-@app.post("/auth/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@api_router.post("/auth/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(request: RegisterRequest):
     """
     Register a new user.
@@ -438,7 +441,7 @@ async def register(request: RegisterRequest):
         )
 
 
-@app.post("/auth/login", response_model=TokenResponse)
+@api_router.post("/auth/login", response_model=TokenResponse)
 async def login(request: LoginRequest):
     """
     Login and get access token.
@@ -465,13 +468,13 @@ async def login(request: LoginRequest):
     )
 
 
-@app.get("/auth/me", response_model=UserResponse)
+@api_router.get("/auth/me", response_model=UserResponse)
 async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     """Get current user information."""
     return UserResponse(**current_user)
 
 
-@app.get("/auth/token-info")
+@api_router.get("/auth/token-info")
 async def get_token_info(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
@@ -515,7 +518,7 @@ async def get_token_info(
         return {"error": str(e)}
 
 
-@app.post("/query", response_model=QueryResponse)
+@api_router.post("/query", response_model=QueryResponse)
 async def query_knowledge_assistant(
     request: QueryRequest,
     current_user: dict = Depends(get_current_user)
@@ -582,7 +585,7 @@ async def query_knowledge_assistant(
         )
 
 
-@app.post("/query/stream")
+@api_router.post("/query/stream")
 async def query_knowledge_assistant_stream(
     request: QueryRequest,
     current_user: dict = Depends(get_current_user)
@@ -658,6 +661,15 @@ async def query_knowledge_assistant_stream(
             media_type="text/event-stream"
         )
 
+
+# Mount API router with /api prefix
+app.include_router(api_router, prefix="/api")
+
+# Keep root endpoint at / for health checks (outside /api prefix)
+@app.get("/")
+async def root_health():
+    """Root endpoint for ALB health checks."""
+    return {"status": "ok", "service": "PDF Knowledge Assistant API"}
 
 if __name__ == "__main__":
     import uvicorn
