@@ -100,4 +100,3 @@ api_base_url = null  # Will use ALB URL automatically if null
 # ECR Repository Configuration (repositories created manually)
 ecr_repo_api_name = "pdf-rag-api"  # ECR repository name for API
 ecr_repo_ui_name = "pdf-rag-ui"  # ECR repository name for UI
-
