@@ -1,5 +1,5 @@
 # AWS Configuration
-region = "us-east-1"  # TODO: Set your AWS region
+region = "ap-northeast-3"  # AWS region
 
 # Application Configuration
 app_name = "pdf-knowledge-assistant"  # TODO: Update with your application name
@@ -32,7 +32,7 @@ rds_engine            = "postgres"  # TODO: Database engine (postgres, mysql, et
 rds_engine_version    = "15.4"  # TODO: Database engine version
 rds_database_name     = "pdf_knowledge_db"  # TODO: Set your database name
 rds_username          = "admin"  # TODO: Set RDS master username
-rds_password          = "CHANGE_ME_PASSWORD"  # TODO: Set a strong RDS master password
+rds_password          = "DummyRdsPassword123!"  # Dummy RDS master password
 rds_backup_retention_period = 7  # TODO: Set backup retention period in days
 rds_backup_window     = "03:00-04:00"  # TODO: Set backup window (UTC)
 rds_maintenance_window = "mon:04:00-mon:05:00"  # TODO: Set maintenance window (UTC)
@@ -55,9 +55,10 @@ api_task_cpu    = null  # TODO: Set API task CPU if different from task_cpu (nul
 api_task_memory = null  # TODO: Set API task memory if different from task_memory (null = use task_memory)
 
 # Docker Images
-image_uri    = "YOUR_ECR_REPO_URI:latest"  # TODO: Set your ECR image URI (used for UI if ui_image_uri not set)
-ui_image_uri = null  # TODO: Set UI image URI if different from image_uri (null = use image_uri)
-api_image_uri = null  # TODO: Set API image URI if different from image_uri (null = use image_uri)
+# Format: {AWS_ACCOUNT_ID}.dkr.ecr.{REGION}.amazonaws.com/{REPO_NAME}:latest
+image_uri    = "198696735120.dkr.ecr.ap-northeast-3.amazonaws.com/pdf-rag-ui:latest"  # Fallback (not used since ui_image_uri and api_image_uri are set)
+ui_image_uri = "198696735120.dkr.ecr.ap-northeast-3.amazonaws.com/pdf-rag-ui:latest"
+api_image_uri = "198696735120.dkr.ecr.ap-northeast-3.amazonaws.com/pdf-rag-api:latest"
 
 # ECS Service Configuration (defaults - used if UI/API specific values not set)
 desired_count = 1  # TODO: Set desired number of tasks
@@ -96,3 +97,6 @@ allowed_origins = null  # Will use ALB URL automatically if null (comma-separate
 # Frontend Configuration
 api_base_url = null  # Will use ALB URL automatically if null
 
+# ECR Repository Configuration (repositories created manually)
+ecr_repo_api_name = "pdf-rag-api"  # ECR repository name for API
+ecr_repo_ui_name = "pdf-rag-ui"  # ECR repository name for UI

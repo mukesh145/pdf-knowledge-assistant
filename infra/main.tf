@@ -452,6 +452,25 @@ resource "aws_iam_role_policy_attachment" "exec_attach"{
     policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# IAM policy for ECR access
+data "aws_iam_policy_document" "ecr_access" {
+    statement {
+        actions = [
+            "ecr:GetAuthorizationToken",
+            "ecr:BatchCheckLayerAvailability",
+            "ecr:GetDownloadUrlForLayer",
+            "ecr:BatchGetImage"
+        ]
+        resources = ["*"]
+    }
+}
+
+resource "aws_iam_role_policy" "ecr_access" {
+    name   = "${var.app_name}-ecr-access"
+    role   = aws_iam_role.task_exec.id
+    policy = data.aws_iam_policy_document.ecr_access.json
+}
+
 # IAM Task Role - for application permissions (accessing AWS services from containers)
 resource "aws_iam_role" "task_role" {
     name = "${var.app_name}-task-role"
@@ -460,6 +479,17 @@ resource "aws_iam_role" "task_role" {
     tags = {
         Name = "${var.app_name}-task-role"
     }
+}
+
+#--------ECR Repository-----------
+# Note: ECR repositories are created manually through AWS Console
+# Using data sources to reference existing repositories
+data "aws_ecr_repository" "api" {
+    name = var.ecr_repo_api_name != null ? var.ecr_repo_api_name : "${var.app_name}-api"
+}
+
+data "aws_ecr_repository" "ui" {
+    name = var.ecr_repo_ui_name != null ? var.ecr_repo_ui_name : "${var.app_name}-ui"
 }
 
 #--------ECS Cluster-----------

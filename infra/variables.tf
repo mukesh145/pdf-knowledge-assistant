@@ -322,3 +322,15 @@ variable "api_base_url" {
     default     = null
 }
 
+variable "ecr_repo_api_name" {
+    description = "ECR repository name for API (will use app_name-api if not set)"
+    type        = string
+    default     = null
+}
+
+variable "ecr_repo_ui_name" {
+    description = "ECR repository name for UI (will use app_name-ui if not set)"
+    type        = string
+    default     = null
+}
+
