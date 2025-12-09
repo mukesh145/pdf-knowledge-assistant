@@ -1,7 +1,7 @@
 name: Build, Push and Deploy UI (ECR->ECS)
 
 on:
-  push: 
+  # push: 
     # branches: [ main ]
     # paths:
     #   - 'frontend/**'
