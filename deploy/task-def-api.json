@@ -4,8 +4,8 @@
   "networkMode": "awsvpc",
   "cpu": "512",
   "memory": "1024",
-  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/pdf-knowledge-assistant-exec-role",
-  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/pdf-knowledge-assistant-task-role",
+  "executionRoleArn": "arn:aws:iam::198696735120:role/pdf-knowledge-assistant-exec-role",
+  "taskRoleArn": "arn:aws:iam::198696735120:role/pdf-knowledge-assistant-task-role",
   "runtimePlatform": {
     "operatingSystemFamily": "LINUX",
     "cpuArchitecture": "ARM64"
@@ -41,38 +41,38 @@
       "secrets": [
         {
           "name": "DB_HOST",
-          "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/pdf-knowledge-assistant/db-host"
+          "valueFrom": "arn:aws:ssm:ap-northeast-3:198696735120:parameter/pdf-knowledge-assistant/db-host"
         },
         {
           "name": "DB_USER",
-          "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/pdf-knowledge-assistant/db-user"
+          "valueFrom": "arn:aws:ssm:ap-northeast-3:198696735120:parameter/pdf-knowledge-assistant/db-user"
         },
         {
           "name": "DB_PASSWORD",
-          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:pdf-knowledge-assistant-secrets:DB_PASSWORD::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets:DB_PASSWORD::"
         },
         {
           "name": "JWT_SECRET_KEY",
-          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:pdf-knowledge-assistant-secrets:JWT_SECRET_KEY::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets:JWT_SECRET_KEY::"
         },
         {
           "name": "OPENAI_API_KEY",
-          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:pdf-knowledge-assistant-secrets:OPENAI_API_KEY::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets:OPENAI_API_KEY::"
         },
         {
           "name": "PINECONE_API_KEY",
-          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:pdf-knowledge-assistant-secrets:PINECONE_API_KEY::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets:PINECONE_API_KEY::"
         },
         {
           "name": "ALLOWED_ORIGINS",
-          "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/pdf-knowledge-assistant/allowed-origins"
+          "valueFrom": "arn:aws:ssm:ap-northeast-3:198696735120:parameter/pdf-knowledge-assistant/allowed-origins"
         }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
           "awslogs-group": "/ecs/pdf-knowledge-assistant-api",
-          "awslogs-region": "us-east-1",
+          "awslogs-region": "ap-northeast-3",
           "awslogs-stream-prefix": "pdf-knowledge-assistant-api"
         }
       },
