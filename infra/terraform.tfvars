@@ -9,7 +9,7 @@ vpc_cidr = "10.0.0.0/16"  # TODO: Adjust if needed (must be /16 for 4 subnets)
 
 # Networking Configuration
 enable_nat_gateway        = true   # Set to false to disable NAT gateways (saves costs but private subnets won't have internet access)
-ecs_use_private_subnets   = true  # Set to true to deploy ECS tasks in private subnets
+ecs_use_private_subnets   = false  # Set to true to deploy ECS tasks in private subnets
 
 # Container Configuration
 container_port    = 8000  # TODO: Set your container port (used for UI if ui_port not set)
@@ -54,7 +54,9 @@ ui_task_memory = null  # TODO: Set UI task memory if different from task_memory 
 api_task_cpu    = null  # TODO: Set API task CPU if different from task_cpu (null = use task_cpu)
 api_task_memory = null  # TODO: Set API task memory if different from task_memory (null = use task_memory)
 
-
+# Docker Images
+# Format: {AWS_ACCOUNT_ID}.dkr.ecr.{REGION}.amazonaws.com/{REPO_NAME}:latest
+image_uri    = "198696735120.dkr.ecr.ap-northeast-3.amazonaws.com/pdf-rag-ui:latest"  # Fallback (not used since ui_image_uri and api_image_uri are set)
 ui_image_uri = "198696735120.dkr.ecr.ap-northeast-3.amazonaws.com/pdf-rag-ui:latest"
 api_image_uri = "198696735120.dkr.ecr.ap-northeast-3.amazonaws.com/pdf-rag-api:latest"
 
@@ -76,7 +78,6 @@ ecs_cpu_architecture = "ARM64"  # CPU architecture for ECS tasks (ARM64 or X86_6
 # S3 Configuration
 s3_bucket_name = "knowledge-assistant-project"  # S3 bucket name for application data storage (set to null to disable S3 permissions)
 
-
 # Backend API Environment Variables
 # Note: DB credentials will use RDS values if not specified here
 db_host = null  # Will use RDS endpoint automatically if null
@@ -86,17 +87,17 @@ db_password = null  # Will use rds_password if null
 
 jwt_secret_key = "CHANGE_ME_JWT_SECRET_KEY"  # TODO: Set a strong JWT secret key
 openai_api_key = "CHANGE_ME_OPENAI_API_KEY"  # TODO: Set your OpenAI API key
-pinecone_api_key = "CHANGE_ME_PINECONE_API_KEY"  # TODO: Set your Pinecone API key 
-pinecone_index_name = "test"  
-pinecone_environment = "us-east-1" 
+pinecone_api_key = "CHANGE_ME_PINECONE_API_KEY"  # TODO: Set your Pinecone API key
+pinecone_index_name = "test"  # TODO: Set your Pinecone index name
+pinecone_environment = "us-east-1"  # TODO: Set your Pinecone environment/region
 
 # CORS Configuration
-allowed_origins = null 
+allowed_origins = null  # Will use ALB URL automatically if null (comma-separated for multiple origins)
 
 # Frontend Configuration
-api_base_url = null  
+api_base_url = null  # Will use ALB URL automatically if null
 
-
-ecr_repo_api_name = "pdf-rag-api" 
-ecr_repo_ui_name = "pdf-rag-ui"  
+# ECR Repository Configuration (repositories created manually)
+ecr_repo_api_name = "pdf-rag-api"  # ECR repository name for API
+ecr_repo_ui_name = "pdf-rag-ui"  # ECR repository name for UI
 
