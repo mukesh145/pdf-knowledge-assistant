@@ -8,16 +8,15 @@ app_name = "pdf-knowledge-assistant"  # TODO: Update with your application name
 vpc_cidr = "10.0.0.0/16"  # TODO: Adjust if needed (must be /16 for 4 subnets)
 
 # Networking Configuration
-enable_nat_gateway        = true   # Set to false to disable NAT gateways (saves costs but private subnets won't have internet access)
-ecs_use_private_subnets   = false  # Set to true to deploy ECS tasks in private subnets
+enable_nat_gateway = true   # NAT Gateway is required for ECS tasks in private subnets (Elastic IPs are automatically created)
 
 # Container Configuration
 container_port    = 8000  # TODO: Set your container port (used for UI if ui_port not set)
 health_check_path = "/health"  # TODO: Set your health check endpoint (used for UI if ui_health_check_path not set)
 
 # UI Configuration
-ui_port              = null  # TODO: Set UI port if different from container_port (null = use container_port)
-ui_health_check_path = null  # TODO: Set UI health check path if different (null = use health_check_path)
+ui_port              = 80  # TODO: Set UI port if different from container_port (null = use container_port)
+ui_health_check_path = "/health" # TODO: Set UI health check path if different (null = use health_check_path)
 
 # API Configuration
 api_port              = 8000  # TODO: Set your API container port
@@ -29,10 +28,9 @@ rds_instance_class    = "db.t3.micro"  # TODO: Set RDS instance class (e.g., db.
 rds_allocated_storage = 20  # TODO: Set initial storage in GB
 rds_max_allocated_storage = 100  # TODO: Set maximum storage for autoscaling in GB
 rds_engine            = "postgres"  # TODO: Database engine (postgres, mysql, etc.)
-rds_engine_version    = "15.4"  # TODO: Database engine version
-rds_database_name     = "pdf_knowledge_db"  # TODO: Set your database name
-rds_username          = "admin"  # TODO: Set RDS master username
-rds_password          = "DummyRdsPassword123!"  # Dummy RDS master password
+rds_engine_version    = "15.12"  # TODO: Database engine version (available versions in ap-northeast-3: 15.10, 15.12, 15.13, 15.14, 15.15)
+rds_database_name     = "ka_db"  # TODO: Set your database name
+rds_username          = "postgres_user"  # TODO: Set RDS master username
 rds_backup_retention_period = 7  # TODO: Set backup retention period in days
 rds_backup_window     = "03:00-04:00"  # TODO: Set backup window (UTC)
 rds_maintenance_window = "mon:04:00-mon:05:00"  # TODO: Set maintenance window (UTC)
@@ -51,8 +49,8 @@ ui_task_cpu    = null  # TODO: Set UI task CPU if different from task_cpu (null 
 ui_task_memory = null  # TODO: Set UI task memory if different from task_memory (null = use task_memory)
 
 # API Task Configuration
-api_task_cpu    = null  # TODO: Set API task CPU if different from task_cpu (null = use task_cpu)
-api_task_memory = null  # TODO: Set API task memory if different from task_memory (null = use task_memory)
+api_task_cpu    = 2048  # 2 vCPU for RAG/LLM processing (1024 = 1 vCPU)
+api_task_memory = 4096  # 4 GB memory for RAG pipeline and LLM operations (in MB)
 
 # Docker Images
 # Format: {AWS_ACCOUNT_ID}.dkr.ecr.{REGION}.amazonaws.com/{REPO_NAME}:latest
@@ -79,15 +77,19 @@ ecs_cpu_architecture = "ARM64"  # CPU architecture for ECS tasks (ARM64 or X86_6
 s3_bucket_name = "knowledge-assistant-project"  # S3 bucket name for application data storage (set to null to disable S3 permissions)
 
 # Backend API Environment Variables
-# Note: DB credentials will use RDS values if not specified here
-db_host = null  # Will use RDS endpoint automatically if null
-db_name = null  # Will use rds_database_name if null
-db_user = null  # Will use rds_username if null
-db_password = null  # Will use rds_password if null
+# Note: Secrets are stored in AWS Secrets Manager
+# The following values are retrieved from:
+# - DB_PASSWORD: Secrets Manager pdf-knowledge-assistant-secrets:DB_PASSWORD
+# - JWT_SECRET_KEY: Secrets Manager pdf-knowledge-assistant-secrets:JWT_SECRET_KEY
+# - OPENAI_API_KEY: Secrets Manager pdf-knowledge-assistant-secrets:OPENAI_API_KEY
+# - PINECONE_API_KEY: Secrets Manager pdf-knowledge-assistant-secrets:PINECONE_API_KEY
 
-jwt_secret_key = "CHANGE_ME_JWT_SECRET_KEY"  # TODO: Set a strong JWT secret key
-openai_api_key = "CHANGE_ME_OPENAI_API_KEY"  # TODO: Set your OpenAI API key
-pinecone_api_key = "CHANGE_ME_PINECONE_API_KEY"  # TODO: Set your Pinecone API key
+# Non-secret environment variables
+db_name = null  # Will use rds_database_name if null
+db_host = null  # Will use RDS endpoint automatically if null
+db_user = null  # Will use rds_username automatically if null
+
+
 pinecone_index_name = "test"  # TODO: Set your Pinecone index name
 pinecone_environment = "us-east-1"  # TODO: Set your Pinecone environment/region
 
