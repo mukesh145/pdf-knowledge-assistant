@@ -15,15 +15,9 @@ variable "vpc_cidr" {
 }
 
 variable "enable_nat_gateway" {
-    description = "Enable NAT Gateway for private subnets"
+    description = "Enable NAT Gateway for private subnets (required for ECS tasks in private subnets)"
     type        = bool
     default     = true
-}
-
-variable "ecs_use_private_subnets" {
-    description = "Whether to deploy ECS tasks in private subnets"
-    type        = bool
-    default     = false
 }
 
 variable "container_port" {
@@ -173,7 +167,7 @@ variable "rds_engine" {
 variable "rds_engine_version" {
     description = "RDS database engine version"
     type        = string
-    default     = "15.4"
+    default     = "15.12"
 }
 
 variable "rds_database_name" {
@@ -252,12 +246,8 @@ variable "s3_bucket_name" {
 }
 
 # Backend API Environment Variables
-variable "db_host" {
-    description = "RDS database host (endpoint) - will use RDS endpoint if not set"
-    type        = string
-    sensitive   = true
-    default     = null
-}
+# Note: Secrets for ECS tasks are retrieved from AWS Secrets Manager
+# at runtime. These variables are used for environment configuration.
 
 variable "db_name" {
     description = "RDS database name - will use rds_database_name if not set"
@@ -265,36 +255,16 @@ variable "db_name" {
     default     = null
 }
 
+variable "db_host" {
+    description = "Database host - will use RDS endpoint if not set"
+    type        = string
+    default     = null
+}
+
 variable "db_user" {
-    description = "RDS database username - will use rds_username if not set"
+    description = "Database user - will use rds_username if not set"
     type        = string
-    sensitive   = true
     default     = null
-}
-
-variable "db_password" {
-    description = "RDS database password - will use rds_password if not set"
-    type        = string
-    sensitive   = true
-    default     = null
-}
-
-variable "jwt_secret_key" {
-    description = "JWT secret key for token generation"
-    type        = string
-    sensitive   = true
-}
-
-variable "openai_api_key" {
-    description = "OpenAI API key"
-    type        = string
-    sensitive   = true
-}
-
-variable "pinecone_api_key" {
-    description = "Pinecone API key"
-    type        = string
-    sensitive   = true
 }
 
 variable "pinecone_index_name" {

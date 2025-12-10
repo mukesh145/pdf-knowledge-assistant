@@ -27,7 +27,15 @@
       "environment": [
         {
           "name": "DB_NAME",
-          "value": "pdf_knowledge_db"
+          "value": "ka_db"
+        },
+        {
+          "name": "DB_HOST",
+          "value": "ka-database.cn8w6w4y0zf2.ap-northeast-3.rds.amazonaws.com"
+        },
+        {
+          "name": "DB_USER",
+          "value": "postgres_user"
         },
         {
           "name": "PINECONE_INDEX_NAME",
@@ -36,36 +44,28 @@
         {
           "name": "PINECONE_ENVIRONMENT",
           "value": "us-east-1"
+        },
+        {
+          "name": "ALLOWED_ORIGINS",
+          "value": "*"
         }
       ],
       "secrets": [
         {
-          "name": "DB_HOST",
-          "valueFrom": "arn:aws:ssm:ap-northeast-3:198696735120:parameter/pdf-knowledge-assistant/db-host"
-        },
-        {
-          "name": "DB_USER",
-          "valueFrom": "arn:aws:ssm:ap-northeast-3:198696735120:parameter/pdf-knowledge-assistant/db-user"
-        },
-        {
           "name": "DB_PASSWORD",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets:DB_PASSWORD::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets-q88qLr:DB_PASSWORD::"
         },
         {
           "name": "JWT_SECRET_KEY",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets:JWT_SECRET_KEY::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets-q88qLr:JWT_SECRET_KEY::"
         },
         {
           "name": "OPENAI_API_KEY",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets:OPENAI_API_KEY::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets-q88qLr:OPENAI_API_KEY::"
         },
         {
           "name": "PINECONE_API_KEY",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets:PINECONE_API_KEY::"
-        },
-        {
-          "name": "ALLOWED_ORIGINS",
-          "valueFrom": "arn:aws:ssm:ap-northeast-3:198696735120:parameter/pdf-knowledge-assistant/allowed-origins"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets-q88qLr:PINECONE_API_KEY::"
         }
       ],
       "logConfiguration": {

@@ -140,24 +140,126 @@ resource "aws_route_table_association" "private" {
     route_table_id = aws_route_table.private[count.index].id
 }
 
+# Data source to get current AWS account ID
+data "aws_caller_identity" "current" {}
+
 locals{
     public_subnets  = aws_subnet.public[*].id
     private_subnets = aws_subnet.private[*].id
     alb_subnets     = aws_subnet.public[*].id
-    ecs_subnets     = var.ecs_use_private_subnets ? aws_subnet.private[*].id : aws_subnet.public[*].id
+    ecs_subnets     = aws_subnet.private[*].id  # ECS tasks always use private subnets
     app_name        = var.app_name
     log_group_name  = "/ecs/${var.app_name}"
     container_port  = var.container_port
     
-    # Environment variables
-    db_host          = var.db_host != null ? var.db_host : aws_db_instance.main.endpoint
+    # Environment variables (non-secret values)
     db_name          = var.db_name != null ? var.db_name : var.rds_database_name
+    db_host          = var.db_host != null ? var.db_host : aws_db_instance.main.endpoint
     db_user          = var.db_user != null ? var.db_user : var.rds_username
-    db_password      = var.db_password != null ? var.db_password : var.rds_password
     alb_dns_name     = aws_lb.this.dns_name
     alb_url          = "http://${aws_lb.this.dns_name}"
     allowed_origins  = var.allowed_origins != null ? var.allowed_origins : local.alb_url
     api_base_url     = var.api_base_url != null ? var.api_base_url : local.alb_url
+    
+    # Get AWS account ID for ARN construction
+    aws_account_id = data.aws_caller_identity.current.account_id
+    
+    # Read and parse the UI task definition JSON
+    ui_task_def_raw = jsondecode(file("${path.module}/../deploy/task-def-ui.json"))
+    
+    # Read and parse the API task definition JSON
+    api_task_def_raw = jsondecode(file("${path.module}/../deploy/task-def-api.json"))
+    
+    # Update UI task definition with dynamic values
+    ui_task_def = {
+        family                   = "${var.app_name}-td-ui"
+        requiresCompatibilities  = local.ui_task_def_raw.requiresCompatibilities
+        networkMode             = local.ui_task_def_raw.networkMode
+        cpu                      = tostring(var.ui_task_cpu != null ? var.ui_task_cpu : var.task_cpu)
+        memory                   = tostring(var.ui_task_memory != null ? var.ui_task_memory : var.task_memory)
+        executionRoleArn         = aws_iam_role.task_exec.arn
+        taskRoleArn              = aws_iam_role.task_role.arn
+        runtimePlatform          = local.ui_task_def_raw.runtimePlatform
+        ephemeralStorage         = local.ui_task_def_raw.ephemeralStorage
+        containerDefinitions     = [
+            for container in local.ui_task_def_raw.containerDefinitions : merge(
+                container,
+                {
+                    image = var.ui_image_uri != null ? var.ui_image_uri : var.image_uri
+                    environment = [
+                        for env in container.environment : merge(
+                            env,
+                            env.name == "VITE_API_BASE_URL" ? { value = local.api_base_url } : {}
+                        )
+                    ]
+                    logConfiguration = {
+                        logDriver = container.logConfiguration.logDriver
+                        options = merge(
+                            container.logConfiguration.options,
+                            {
+                                "awslogs-group"  = "${local.log_group_name}-ui"
+                                "awslogs-region" = var.region
+                            }
+                        )
+                    }
+                }
+            )
+        ]
+    }
+    
+    # Update API task definition with dynamic values
+    api_task_def = {
+        family                   = "${var.app_name}-td-api"
+        requiresCompatibilities  = local.api_task_def_raw.requiresCompatibilities
+        networkMode             = local.api_task_def_raw.networkMode
+        cpu                      = tostring(var.api_task_cpu != null ? var.api_task_cpu : var.task_cpu)
+        memory                   = tostring(var.api_task_memory != null ? var.api_task_memory : var.task_memory)
+        executionRoleArn         = aws_iam_role.task_exec.arn
+        taskRoleArn              = aws_iam_role.task_role.arn
+        runtimePlatform          = local.api_task_def_raw.runtimePlatform
+        ephemeralStorage         = local.api_task_def_raw.ephemeralStorage
+        containerDefinitions     = [
+            for container in local.api_task_def_raw.containerDefinitions : merge(
+                container,
+                {
+                    image = var.api_image_uri != null ? var.api_image_uri : var.image_uri
+                    environment = [
+                        for env in container.environment : merge(
+                            env,
+                            env.name == "DB_NAME" ? { value = local.db_name } : {},
+                            env.name == "DB_HOST" ? { value = local.db_host } : {},
+                            env.name == "DB_USER" ? { value = local.db_user } : {},
+                            env.name == "PINECONE_INDEX_NAME" ? { value = var.pinecone_index_name } : {},
+                            env.name == "PINECONE_ENVIRONMENT" ? { value = var.pinecone_environment } : {},
+                            env.name == "ALLOWED_ORIGINS" ? { value = local.allowed_origins } : {}
+                        )
+                    ]
+                    secrets = [
+                        for secret in container.secrets : merge(
+                            secret,
+                            {
+                                valueFrom = replace(
+                                    secret.valueFrom,
+                                    "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:",
+                                    "arn:aws:secretsmanager:${var.region}:${local.aws_account_id}:secret:"
+                                )
+                            }
+                        )
+                    ]
+                    logConfiguration = {
+                        logDriver = container.logConfiguration.logDriver
+                        options = merge(
+                            container.logConfiguration.options,
+                            {
+                                "awslogs-group"  = "${local.log_group_name}-api"
+                                "awslogs-region" = var.region
+                            }
+                        )
+                    }
+                }
+            )
+        ]
+    }
 }
 
 
@@ -471,6 +573,25 @@ resource "aws_iam_role_policy" "ecr_access" {
     policy = data.aws_iam_policy_document.ecr_access.json
 }
 
+# IAM policy for Secrets Manager access
+data "aws_iam_policy_document" "secrets_access" {
+    statement {
+        actions = [
+            "secretsmanager:GetSecretValue",
+            "secretsmanager:DescribeSecret"
+        ]
+        resources = [
+            "arn:aws:secretsmanager:${var.region}:*:secret:${var.app_name}-secrets*"
+        ]
+    }
+}
+
+resource "aws_iam_role_policy" "secrets_access" {
+    name   = "${var.app_name}-secrets-access"
+    role   = aws_iam_role.task_exec.id
+    policy = data.aws_iam_policy_document.secrets_access.json
+}
+
 # IAM Task Role - for application permissions (accessing AWS services from containers)
 resource "aws_iam_role" "task_role" {
     name = "${var.app_name}-task-role"
@@ -502,150 +623,54 @@ resource "aws_ecs_cluster" "this" {
     }
 }
 
-# Task Definition for UI
+# Task Definition for UI - using JSON file from deploy directory
+
 resource "aws_ecs_task_definition" "ui" {
-    family                   = "${var.app_name}-td-ui"
-    requires_compatibilities  = ["FARGATE"]
-    network_mode             = "awsvpc"
-    cpu                      = var.ui_task_cpu != null ? var.ui_task_cpu : var.task_cpu
-    memory                   = var.ui_task_memory != null ? var.ui_task_memory : var.task_memory
-    execution_role_arn       = aws_iam_role.task_exec.arn
-    task_role_arn            = aws_iam_role.task_role.arn
+    family                   = local.ui_task_def.family
+    requires_compatibilities = local.ui_task_def.requiresCompatibilities
+    network_mode             = local.ui_task_def.networkMode
+    cpu                      = tonumber(local.ui_task_def.cpu)
+    memory                   = tonumber(local.ui_task_def.memory)
+    execution_role_arn       = local.ui_task_def.executionRoleArn
+    task_role_arn            = local.ui_task_def.taskRoleArn
 
     runtime_platform {
-        operating_system_family = "LINUX"
-        cpu_architecture        = var.ecs_cpu_architecture
+        operating_system_family = local.ui_task_def.runtimePlatform.operatingSystemFamily
+        cpu_architecture        = local.ui_task_def.runtimePlatform.cpuArchitecture
     }
 
     ephemeral_storage {
-        size_in_gib = var.ephemeral_storage
+        size_in_gib = local.ui_task_def.ephemeralStorage.sizeInGiB
     }
 
-    container_definitions = jsonencode([
-        {
-            name      = "${var.app_name}-ui"
-            image     = var.ui_image_uri != null ? var.ui_image_uri : var.image_uri
-            essential = true
-            portMappings = [{
-                containerPort = var.ui_port != null ? var.ui_port : var.container_port
-                protocol      = "tcp"
-            }]
-            environment = [
-                {
-                    name  = "VITE_API_BASE_URL"
-                    value = local.api_base_url
-                }
-            ]
-            logConfiguration = {
-                logDriver = "awslogs"
-                options = {
-                    "awslogs-group"         = "${local.log_group_name}-ui"
-                    "awslogs-region"        = var.region
-                    "awslogs-stream-prefix" = "${var.app_name}-ui"
-                }
-            }
-            healthCheck = {
-                command     = ["CMD-SHELL", "curl -sf http://localhost:${var.ui_port != null ? var.ui_port : var.container_port}${var.ui_health_check_path != null ? var.ui_health_check_path : var.health_check_path} || exit 1"]
-                interval    = 15
-                timeout     = 5
-                retries     = 3
-                startPeriod = 10
-            }
-        }
-    ])
+    container_definitions = jsonencode(local.ui_task_def.containerDefinitions)
 
     tags = {
         Name = "${var.app_name}-td-ui"
     }
 }
 
-# Task Definition for API
+# Task Definition for API - using JSON file from deploy directory
+
 resource "aws_ecs_task_definition" "api" {
-    family                   = "${var.app_name}-td-api"
-    requires_compatibilities  = ["FARGATE"]
-    network_mode             = "awsvpc"
-    cpu                      = var.api_task_cpu != null ? var.api_task_cpu : var.task_cpu
-    memory                   = var.api_task_memory != null ? var.api_task_memory : var.task_memory
-    execution_role_arn       = aws_iam_role.task_exec.arn
-    task_role_arn            = aws_iam_role.task_role.arn
+    family                   = local.api_task_def.family
+    requires_compatibilities = local.api_task_def.requiresCompatibilities
+    network_mode             = local.api_task_def.networkMode
+    cpu                      = tonumber(local.api_task_def.cpu)
+    memory                   = tonumber(local.api_task_def.memory)
+    execution_role_arn       = local.api_task_def.executionRoleArn
+    task_role_arn            = local.api_task_def.taskRoleArn
 
     runtime_platform {
-        operating_system_family = "LINUX"
-        cpu_architecture        = var.ecs_cpu_architecture
+        operating_system_family = local.api_task_def.runtimePlatform.operatingSystemFamily
+        cpu_architecture        = local.api_task_def.runtimePlatform.cpuArchitecture
     }
 
     ephemeral_storage {
-        size_in_gib = var.ephemeral_storage
+        size_in_gib = local.api_task_def.ephemeralStorage.sizeInGiB
     }
 
-    container_definitions = jsonencode([
-        {
-            name      = "${var.app_name}-api"
-            image     = var.api_image_uri != null ? var.api_image_uri : var.image_uri
-            essential = true
-            portMappings = [{
-                containerPort = var.api_port
-                protocol      = "tcp"
-            }]
-            environment = [
-                {
-                    name  = "DB_HOST"
-                    value = local.db_host
-                },
-                {
-                    name  = "DB_NAME"
-                    value = local.db_name
-                },
-                {
-                    name  = "DB_USER"
-                    value = local.db_user
-                },
-                {
-                    name  = "DB_PASSWORD"
-                    value = local.db_password
-                },
-                {
-                    name  = "JWT_SECRET_KEY"
-                    value = var.jwt_secret_key
-                },
-                {
-                    name  = "OPENAI_API_KEY"
-                    value = var.openai_api_key
-                },
-                {
-                    name  = "PINECONE_API_KEY"
-                    value = var.pinecone_api_key
-                },
-                {
-                    name  = "PINECONE_INDEX_NAME"
-                    value = var.pinecone_index_name
-                },
-                {
-                    name  = "PINECONE_ENVIRONMENT"
-                    value = var.pinecone_environment
-                },
-                {
-                    name  = "ALLOWED_ORIGINS"
-                    value = local.allowed_origins
-                }
-            ]
-            logConfiguration = {
-                logDriver = "awslogs"
-                options = {
-                    "awslogs-group"         = "${local.log_group_name}-api"
-                    "awslogs-region"        = var.region
-                    "awslogs-stream-prefix" = "${var.app_name}-api"
-                }
-            }
-            healthCheck = {
-                command     = ["CMD-SHELL", "curl -sf http://localhost:${var.api_port}${var.api_health_check_path} || exit 1"]
-                interval    = 15
-                timeout     = 5
-                retries     = 3
-                startPeriod = 10
-            }
-        }
-    ])
+    container_definitions = jsonencode(local.api_task_def.containerDefinitions)
 
     tags = {
         Name = "${var.app_name}-td-api"
@@ -664,7 +689,7 @@ resource "aws_ecs_service" "ui" {
     network_configuration {
         subnets         = local.ecs_subnets
         security_groups = [aws_security_group.ecs_sg.id]
-        assign_public_ip = var.ecs_use_private_subnets ? false : true
+        assign_public_ip = false  # ECS tasks always use private subnets with NAT Gateway
     }
 
     # Register with UI target group (tg-ui)
@@ -697,7 +722,7 @@ resource "aws_ecs_service" "api" {
     network_configuration {
         subnets         = local.ecs_subnets
         security_groups = [aws_security_group.ecs_sg.id]
-        assign_public_ip = var.ecs_use_private_subnets ? false : true
+        assign_public_ip = false  # ECS tasks always use private subnets with NAT Gateway
     }
 
     # Register with API target group (tg-api)
