@@ -1,0 +1,89 @@
+{
+  "family": "pdf-knowledge-assistant-td-api",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::198696735120:role/pdf-knowledge-assistant-exec-role",
+  "taskRoleArn": "arn:aws:iam::198696735120:role/pdf-knowledge-assistant-task-role",
+  "runtimePlatform": {
+    "operatingSystemFamily": "LINUX",
+    "cpuArchitecture": "ARM64"
+  },
+  "ephemeralStorage": {
+    "sizeInGiB": 21
+  },
+  "containerDefinitions": [
+    {
+      "name": "pdf-knowledge-assistant-api",
+      "image": "PLACEHOLDER_IMAGE_URI",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "DB_NAME",
+          "value": "ka_db"
+        },
+        {
+          "name": "DB_HOST",
+          "value": "ka-database.cn8w6w4y0zf2.ap-northeast-3.rds.amazonaws.com"
+        },
+        {
+          "name": "DB_USER",
+          "value": "postgres_user"
+        },
+        {
+          "name": "PINECONE_INDEX_NAME",
+          "value": "test"
+        },
+        {
+          "name": "PINECONE_ENVIRONMENT",
+          "value": "us-east-1"
+        },
+        {
+          "name": "ALLOWED_ORIGINS",
+          "value": "*"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "DB_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets-q88qLr:DB_PASSWORD::"
+        },
+        {
+          "name": "JWT_SECRET_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets-q88qLr:JWT_SECRET_KEY::"
+        },
+        {
+          "name": "OPENAI_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets-q88qLr:OPENAI_API_KEY::"
+        },
+        {
+          "name": "PINECONE_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-3:198696735120:secret:pdf-knowledge-assistant-secrets-q88qLr:PINECONE_API_KEY::"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/pdf-knowledge-assistant-api",
+          "awslogs-region": "ap-northeast-3",
+          "awslogs-stream-prefix": "pdf-knowledge-assistant-api"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -sf http://localhost:8000/api/health || exit 1"],
+        "interval": 15,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 10
+      }
+    }
+  ]
+}
+

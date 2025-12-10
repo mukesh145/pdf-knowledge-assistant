@@ -1,0 +1,46 @@
+FROM apache/airflow:2.9.0-python3.11
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl vim git \
+    gcc g++ build-essential python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+
+USER airflow
+
+COPY requirements/ka_requirements.txt /requirements.txt
+
+RUN pip install --no-cache-dir -r /requirements.txt
+
+# Install system packages required for Unstructured[pdf] and OpenCV
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libmagic-dev \
+    poppler-utils \
+    tesseract-ocr \
+    qpdf \
+    libreoffice \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+
+# Create Hugging Face cache directory with proper permissions
+USER root
+RUN mkdir -p /opt/airflow/.cache/huggingface/hub && \
+    chown -R airflow:root /opt/airflow/.cache && \
+    chmod -R 775 /opt/airflow/.cache
+USER airflow
+
+# RUN mkdir -p /opt/airflow/mlruns
+
+
+

@@ -1,0 +1,104 @@
+name : Build Push and Deploy API (ECR->ECS)
+
+on:
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - 'api/**'
+  #     - 'src/**'
+  #     - 'Dockerfile.api'
+  workflow_dispatch:
+  
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION}}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID}}
+  ECR_REPO: ${{ vars.ECR_REPO_API != '' && vars.ECR_REPO_API || vars.ECR_REPO != '' && vars.ECR_REPO || 'pdf-knowledge-assistant-api' }}
+  ECS_CLUSTER: ${{vars.ECS_CLUSTER}}
+  ECS_SERVICE: ${{ vars.ECS_SERVICE_API != '' && vars.ECS_SERVICE_API || 'pdf-knowledge-assistant-svc-api' }}
+  IMAGE_TAG: ${{github.sha}}
+
+
+jobs:
+  build_and_push_api:
+    name: Build and Push API Image to ECR
+    runs-on: ubuntu-latest
+    outputs:
+      IMAGE_URI: ${{steps.compute.outputs.IMAGE_URI}}
+      IMAGE_REF: ${{steps.compute.outputs.IMAGE_REF}}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with: 
+          aws-access-key-id: ${{secrets.AWS_ACCESS_KEY_ID}}
+          aws-secret-access-key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+          aws-region: ${{env.AWS_REGION}}
+      
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Compute Image URI
+        id: compute
+        run: |
+          IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+          IMAGE_REF="${IMAGE_URI}:${IMAGE_TAG}"
+          echo "IMAGE_URI=${IMAGE_URI}" >> $GITHUB_OUTPUT
+          echo "IMAGE_REF=${IMAGE_REF}" >> $GITHUB_OUTPUT
+        
+      - name: Build and Push API Image 
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.api
+          push: true
+          platform: linux/arm64
+          tags: |
+            ${{steps.compute.outputs.IMAGE_REF}}
+            ${{steps.compute.outputs.IMAGE_URI}}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Output Pushed Image
+        run: |
+          echo "Pushed Image URI: ${{steps.compute.outputs.IMAGE_URI}}:latest"
+          echo "Pushed Image Ref: ${{steps.compute.outputs.IMAGE_REF}}"
+  
+  deploy-ecs:
+    name: Deploy API to ECS (rolling updates)
+    needs: build_and_push_api
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with: 
+          aws-access-key-id: ${{secrets.AWS_ACCESS_KEY_ID}}
+          aws-secret-access-key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+          aws-region: ${{env.AWS_REGION}}
+      
+      - name: Render task defination with new image
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with: 
+          task-definition: deploy/task-def-api.json
+          container-name: ${{ vars.ECS_CONTAINER_NAME_API != '' && vars.ECS_CONTAINER_NAME_API || 'pdf-knowledge-assistant-api' }}
+          image: ${{steps.build_and_push_api.outputs.IMAGE_REF}}
+      
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{steps.render.outputs.task-definition}}
+          service: ${{env.ECS_SERVICE}}
+          cluster: ${{env.ECS_CLUSTER}}
+          wait-for-service-stability: true
+
+

@@ -1,0 +1,97 @@
+name: Build, Push and Deploy UI (ECR->ECS)
+
+on:
+  # push: 
+    # branches: [ main ]
+    # paths:
+    #   - 'frontend/**'
+    #   - 'Dockerfile.frontend'
+    #   - '.github/workflows/ui.yml'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION}}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID}}
+  ECR_REPO: ${{ vars.ECR_REPO_UI != '' && vars.ECR_REPO_UI || vars.ECR_REPO != '' && vars.ECR_REPO || 'pdf-knowledge-assistant-ui' }}
+  ECS_CLUSTER: ${{vars.ECS_CLUSTER}}
+  ECS_SERVICE: ${{ vars.ECS_SERVICE_UI != '' && vars.ECS_SERVICE_UI || 'pdf-knowledge-assistant-svc-ui' }}
+  IMAGE_TAG: ${{github.sha}}
+
+jobs:
+  build_and_push_ui:
+    name: Build and Push UI Image to ECR
+    runs-on: ubuntu-latest
+    outputs:
+      IMAGE_URI: ${{steps.compute.outputs.IMAGE_URI}}
+      IMAGE_REF: ${{steps.compute.outputs.IMAGE_REF}}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with: 
+          aws-access-key-id: ${{secrets.AWS_ACCESS_KEY_ID}}
+          aws-secret-access-key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+          aws-region: ${{env.AWS_REGION}}
+      
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Compute Image URI
+        id: compute
+        run: |
+          IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+          IMAGE_REF="${IMAGE_URI}:${IMAGE_TAG}"
+          echo "IMAGE_URI=${IMAGE_URI}" >> $GITHUB_OUTPUT
+          echo "IMAGE_REF=${IMAGE_REF}" >> $GITHUB_OUTPUT
+        
+      - name: Build and Push UI Image 
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.frontend
+          push: true
+          platform: linux/arm64
+          tags: |
+            ${{steps.compute.outputs.IMAGE_REF}}
+            ${{steps.compute.outputs.IMAGE_URI}}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+  
+  deploy-ecs:
+    name: Deploy UI to ECS (rolling updates)
+    needs: build_and_push_ui
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with: 
+          aws-access-key-id: ${{secrets.AWS_ACCESS_KEY_ID}}
+          aws-secret-access-key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+          aws-region: ${{env.AWS_REGION}}
+      
+      - name: Render task defination with new image
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with: 
+          task-definition: deploy/task-def-ui.json
+          container-name: ${{ vars.ECS_CONTAINER_NAME_UI != '' && vars.ECS_CONTAINER_NAME_UI || 'pdf-knowledge-assistant-ui' }}
+          image: ${{needs.build_and_push_ui.outputs.IMAGE_REF}}
+      
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{steps.render.outputs.task-definition}}
+          service: ${{env.ECS_SERVICE}}
+          cluster: ${{env.ECS_CLUSTER}}
+          wait-for-service-stability: true

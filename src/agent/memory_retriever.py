@@ -1,51 +1,27 @@
 import os
 import psycopg2
+from .db_connection_manager import get_connection_manager
 
 
 class MemoryRetriever:
     """
-    A class for retrieving past conversation history from RDS PostgreSQL database.
+    A class for retrieving past conversation history from database (RDS or local standby).
     """
     
     def __init__(self):
         """
-        Initialize the MemoryRetriever by setting up database connection parameters.
+        Initialize the MemoryRetriever with database connection manager.
         """
-        self._db_connection = None
+        self._connection_manager = get_connection_manager()
     
     def _get_db_connection(self):
         """
-        Create and return a database connection using environment variables.
+        Get a database connection using the connection manager (with failover).
         
         Returns:
             psycopg2 connection object
         """
-        if self._db_connection is None or self._db_connection.closed:
-            # Get database configuration from environment variables
-            db_host = os.getenv("DB_HOST")
-            db_port = os.getenv("DB_PORT", "5432")
-            db_name = os.getenv("DB_NAME")
-            db_user = os.getenv("DB_USER")
-            db_password = os.getenv("DB_PASSWORD")
-            
-            # Validate required environment variables
-            if not all([db_host, db_name, db_user, db_password]):
-                raise ValueError(
-                    "Database connection parameters are missing. "
-                    "Please set DB_HOST, DB_NAME, DB_USER, and DB_PASSWORD environment variables."
-                )
-            
-            # Create database connection
-            self._db_connection = psycopg2.connect(
-                host=db_host,
-                port=db_port,
-                database=db_name,
-                user=db_user,
-                password=db_password
-            )
-            self._db_connection.autocommit = False
-        
-        return self._db_connection
+        return self._connection_manager.get_connection()
     
     def get_past_conversations(self, user_id: int) -> str:
         """
@@ -116,7 +92,5 @@ class MemoryRetriever:
         """
         Close the database connection if it exists.
         """
-        if self._db_connection and not self._db_connection.closed:
-            self._db_connection.close()
-            self._db_connection = None
+        self._connection_manager.close_connection()
 

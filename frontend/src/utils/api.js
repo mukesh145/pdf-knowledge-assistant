@@ -1,6 +1,31 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// Try to get API URL from runtime config (set by entrypoint script)
+// Falls back to build-time env var, then to localhost
+let API_BASE_URL = 'http://localhost:8000';
+
+// Check for runtime config (injected by entrypoint script)
+try {
+  // This will be available at runtime if entrypoint script creates it
+  const runtimeConfig = window.__RUNTIME_CONFIG__;
+  if (runtimeConfig && runtimeConfig.VITE_API_BASE_URL) {
+    API_BASE_URL = runtimeConfig.VITE_API_BASE_URL;
+    console.log('Using runtime API URL:', API_BASE_URL);
+  } else if (import.meta.env.VITE_API_BASE_URL) {
+    API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+    console.log('Using build-time API URL:', API_BASE_URL);
+  } else {
+    console.warn('No API URL configured, using default:', API_BASE_URL);
+  }
+} catch (e) {
+  // Fallback to build-time env var
+  if (import.meta.env.VITE_API_BASE_URL) {
+    API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+    console.log('Using build-time API URL (fallback):', API_BASE_URL);
+  } else {
+    console.warn('No API URL configured, using default:', API_BASE_URL);
+  }
+}
 
 // Create axios instance
 const api = axios.create({
@@ -10,9 +35,14 @@ const api = axios.create({
   },
 });
 
-// Request interceptor to add auth token
+// Request interceptor to add auth token and log requests
 api.interceptors.request.use(
   (config) => {
+    // Log the full URL being requested for debugging
+    const fullUrl = config.baseURL + config.url;
+    console.log(`[API Request] ${config.method?.toUpperCase()} ${fullUrl}`);
+    console.log(`[API Config] baseURL: ${config.baseURL}, url: ${config.url}`);
+    
     const token = localStorage.getItem('access_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -22,6 +52,7 @@ api.interceptors.request.use(
     return config;
   },
   (error) => {
+    console.error('[API Request Error]', error);
     return Promise.reject(error);
   }
 );
@@ -30,6 +61,20 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Log detailed error information for debugging
+    if (error.request) {
+      console.error('[API Error] Request made but no response received');
+      console.error('[API Error] Request URL:', error.config?.url);
+      console.error('[API Error] Base URL:', error.config?.baseURL);
+      console.error('[API Error] Full URL:', error.config?.baseURL + error.config?.url);
+      console.error('[API Error] Error details:', error.message);
+    } else if (error.response) {
+      console.error('[API Error] Server responded with error:', error.response.status);
+      console.error('[API Error] Response data:', error.response.data);
+    } else {
+      console.error('[API Error] Request setup failed:', error.message);
+    }
+    
     if (error.response?.status === 401) {
       // Token expired or invalid - only redirect if not already on login/register page
       const currentPath = window.location.pathname;
@@ -47,7 +92,7 @@ api.interceptors.response.use(
 // Auth API
 export const authAPI = {
   register: async (email, password, fullName) => {
-    const response = await api.post('/auth/register', {
+    const response = await api.post('/api/auth/register', {
       email,
       password,
       full_name: fullName,
@@ -56,7 +101,7 @@ export const authAPI = {
   },
 
   login: async (email, password) => {
-    const response = await api.post('/auth/login', {
+    const response = await api.post('/api/auth/login', {
       email,
       password,
     });
@@ -64,7 +109,7 @@ export const authAPI = {
   },
 
   getMe: async () => {
-    const response = await api.get('/auth/me');
+    const response = await api.get('/api/auth/me');
     return response.data;
   },
 };
@@ -72,7 +117,7 @@ export const authAPI = {
 // Query API
 export const queryAPI = {
   query: async (query) => {
-    const response = await api.post('/query', { query });
+    const response = await api.post('/api/query', { query });
     return response.data;
   },
 
@@ -86,7 +131,7 @@ export const queryAPI = {
       headers.Authorization = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${API_BASE_URL}/query/stream`, {
+    const response = await fetch(`${API_BASE_URL}/api/query/stream`, {
       method: 'POST',
       headers: headers,
       body: JSON.stringify({ query }),

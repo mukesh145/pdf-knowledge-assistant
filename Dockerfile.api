@@ -1,0 +1,44 @@
+FROM python:3.11-slim
+
+# Install PostgreSQL server and client libraries, plus build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql \
+    postgresql-contrib \
+    libpq-dev \
+    curl \
+    build-essential \
+    gcc \
+    g++ \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up PostgreSQL data directory
+RUN mkdir -p /var/lib/postgresql/data && \
+    chown -R postgres:postgres /var/lib/postgresql
+
+# Create directory for PostgreSQL configuration
+RUN mkdir -p /etc/postgresql/standby
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements and install Python dependencies
+COPY requirements/ka_requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r /app/requirements.txt
+
+# Copy application code
+COPY api /app/api
+COPY src /app/src
+COPY configs /app/configs
+
+# Create startup script
+COPY scripts/start_api_container.sh /app/start_api_container.sh
+RUN chmod +x /app/start_api_container.sh
+
+# Expose API port
+EXPOSE 8000
+
+# Use startup script as entrypoint
+ENTRYPOINT ["/app/start_api_container.sh"]
+

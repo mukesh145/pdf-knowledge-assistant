@@ -41,19 +41,50 @@ class QueryState(TypedDict):
 def process_query_node(state: QueryState) -> QueryState:
     """
     Node function that processes the query and adds processed_query to the state.
+    Optionally optimizes the query using LLM and past conversation history.
+    Also retrieves and stores past conversations in memory to avoid duplicate RDS fetches.
     
     Args:
-        state: The current state containing the query
+        state: The current state containing the query and user_id
         
     Returns:
-        Updated state with processed_query added
+        Updated state with processed_query and memory (if user_id is available) added
     """
     
-    processed_query = query_processor.process(state["query"])
+    # Get user_id from state for query optimization
+    user_id = state.get("user_id")
     
-    return {
-        "processed_query": processed_query
-    }
+    # Process and optimize the query, and retrieve past conversations
+    # This avoids fetching from RDS again in get_memory_node
+    if user_id is not None:
+        processed_query, past_conversations = query_processor.process(
+            query=state["query"],
+            user_id=user_id,
+            optimize=True,
+            return_memory=True
+        )
+        
+        # Clean up database connection after retrieving memory
+        try:
+            query_processor.memory_retriever.close_connection()
+        except:
+            pass
+        
+        return {
+            "processed_query": processed_query,
+            "memory": past_conversations
+        }
+    else:
+        # No user_id, so just process the query without optimization
+        processed_query = query_processor.process(
+            query=state["query"],
+            user_id=None,
+            optimize=False
+        )
+        
+        return {
+            "processed_query": processed_query
+        }
 
 
 def intent_classifier_node(state: QueryState) -> QueryState:
@@ -78,15 +109,20 @@ def intent_classifier_node(state: QueryState) -> QueryState:
 def get_memory_node(state: QueryState) -> QueryState:
     """
     Node function that retrieves past conversation history for the user.
+    If memory is already in state (from process_query_node), skips RDS fetch.
     
     Args:
-        state: The current state containing user_id
-        
+        state: The current state containing user_id and potentially memory
+    
     Returns:
         Updated state with memory containing past conversation history
     """
-    # Initialize memory retriever
-    # memory_retriever = MemoryRetriever()
+    # Check if memory is already in state (retrieved during query processing)
+    existing_memory = state.get("memory", "")
+    
+    if existing_memory:
+        # Memory already retrieved in process_query_node, no need to fetch again
+        return {}
     
     # Get user_id from state
     user_id = state.get("user_id")

@@ -1,0 +1,8 @@
+{
+  "1.pdf": {
+    "pdf_path": "/opt/airflow/data/1.pdf",
+    "num_upserted": 0,
+    "status": "error",
+    "error": "'latin-1' codec can't encode character '\\u20ac' in position 21933: Body ('€') is not valid Latin-1. Use body.encode('utf-8') if you want to send it encoded in UTF-8."
+  }
+}

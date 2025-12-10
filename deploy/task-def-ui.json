@@ -1,0 +1,51 @@
+{
+  "family": "pdf-knowledge-assistant-td-ui",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::198696735120:role/pdf-knowledge-assistant-exec-role",
+  "taskRoleArn": "arn:aws:iam::198696735120:role/pdf-knowledge-assistant-task-role",
+  "runtimePlatform": {
+    "operatingSystemFamily": "LINUX",
+    "cpuArchitecture": "ARM64"
+  },
+  "ephemeralStorage": {
+    "sizeInGiB": 21
+  },
+  "containerDefinitions": [
+    {
+      "name": "pdf-knowledge-assistant-ui",
+      "image": "PLACEHOLDER_IMAGE_URI",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 80,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "VITE_API_BASE_URL",
+          "value": ""
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/pdf-knowledge-assistant-ui",
+          "awslogs-region": "ap-northeast-3",
+          "awslogs-stream-prefix": "pdf-knowledge-assistant-ui"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -sf http://localhost:80/health || exit 1"],
+        "interval": 15,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 10
+      }
+    }
+  ]
+}
+

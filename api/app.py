@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
@@ -9,18 +9,18 @@ import os
 import json
 from pathlib import Path
 
-# Add the src directory to the path to import backend modules
+# Add the src directory to the path to import agent and auth modules
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 try:
-    from backend.orchestrator import run_ka_dag, run_ka_dag_stream
-    from backend.auth import create_access_token, decode_access_token
-    from backend.user_manager import UserManager
-    from backend.db_setup import DatabaseSetup
-    print("✓ Successfully imported backend modules")
+    from agent.orchestrator import run_ka_dag, run_ka_dag_stream
+    from auth.auth import create_access_token, decode_access_token
+    from auth.user_manager import UserManager
+    from agent.db_setup import DatabaseSetup
+    print("✓ Successfully imported agent and auth modules")
 except ImportError as e:
-    print(f"✗ Error importing backend modules: {e}")
+    print(f"✗ Error importing agent and auth modules: {e}")
     import traceback
     print(traceback.format_exc())
     raise
@@ -31,6 +31,9 @@ app = FastAPI(
     description="RAG-based knowledge assistant API for querying PDF documents",
     version="1.0.0"
 )
+
+# Create API router with /api prefix
+api_router = APIRouter()
 
 # CORS configuration - use environment variable or default to localhost for development
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
@@ -91,10 +94,17 @@ async def startup_event():
         validate_environment_variables()
         print("✓ Environment variables validated")
         
-        # Create all database tables (safe for existing databases)
+        # Create all database tables on both RDS and local databases
         # Uses IF NOT EXISTS - won't affect existing tables or data
+        print("📊 Initializing database schemas...")
         db_setup.create_all_tables()
-        print("✓ Database setup complete")
+        
+        # Log which database is currently active
+        active_db = db_setup.get_active_db_type()
+        if active_db:
+            print(f"✓ Database setup complete - Active database: {active_db.upper()}")
+        else:
+            print("✓ Database setup complete - No active connection yet")
         
         # Print registered routes for debugging
         print(f"✓ Registered {len(app.routes)} routes")
@@ -110,6 +120,7 @@ async def startup_event():
         import traceback
         print(traceback.format_exc())
         # Don't raise - allow app to start, but log the error
+        # The app can still function with local database even if RDS setup fails
 
 
 # Authentication Models
@@ -223,24 +234,32 @@ async def get_current_user(
         payload = decode_access_token(token)
         
         if payload is None:
+            print(f"DEBUG: Token decode returned None")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired authentication token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
+        print(f"DEBUG: Token payload decoded successfully: {payload}")
+        
         user_id_str = payload.get("sub")
         if user_id_str is None:
+            print(f"DEBUG: No 'sub' field in token payload. Payload keys: {payload.keys()}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication token format",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
+        print(f"DEBUG: Extracted user_id from token: {user_id_str} (type: {type(user_id_str)})")
+        
         # Convert string user_id back to integer
         try:
             user_id: int = int(user_id_str)
-        except (ValueError, TypeError):
+            print(f"DEBUG: Converted user_id to int: {user_id}")
+        except (ValueError, TypeError) as e:
+            print(f"DEBUG: Failed to convert user_id to int: {e}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication token format",
@@ -248,13 +267,29 @@ async def get_current_user(
             )
         
         # Get user from the 'users' table by ID
-        user = user_manager.get_user_by_id(user_id)
+        print(f"DEBUG: Attempting to get user by ID: {user_id}")
+        try:
+            user = user_manager.get_user_by_id(user_id)
+            print(f"DEBUG: get_user_by_id returned: {user}")
+        except Exception as e:
+            print(f"DEBUG: Exception in get_user_by_id: {type(e).__name__}: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Database error: {str(e)}",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
         if user is None:
+            print(f"DEBUG: User not found in database for user_id: {user_id}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        
+        print(f"DEBUG: User found successfully: {user.get('email', 'N/A')}")
         
         return user
     except HTTPException:
@@ -272,7 +307,7 @@ async def get_current_user(
         )
 
 
-@app.get("/")
+@api_router.get("/")
 async def root():
     """Root endpoint to check if the API is running."""
     # Get all registered routes for debugging
@@ -282,19 +317,19 @@ async def root():
         "version": "1.0.0",
         "endpoints": {
             "auth": {
-                "register": "/auth/register",
-                "login": "/auth/login",
-                "me": "/auth/me"
+                "register": "/api/auth/register",
+                "login": "/api/auth/login",
+                "me": "/api/auth/me"
             },
-            "query": "/query",
-            "query_stream": "/query/stream",
-            "health": "/health"
+            "query": "/api/query",
+            "query_stream": "/api/query/stream",
+            "health": "/api/health"
         },
         "registered_routes": routes
     }
 
 
-@app.get("/health")
+@api_router.get("/health")
 async def health_check():
     """
     Health check endpoint that validates all dependencies.
@@ -309,8 +344,12 @@ async def health_check():
     
     # Check database connection
     try:
-        db_setup._get_db_connection()
-        health_status["dependencies"]["database"] = "connected"
+        conn = db_setup._get_db_connection()
+        active_db = db_setup.get_active_db_type()
+        db_status = "connected"
+        if active_db:
+            db_status = f"connected ({active_db.upper()})"
+        health_status["dependencies"]["database"] = db_status
     except Exception as e:
         health_status["status"] = "unhealthy"
         health_status["dependencies"]["database"] = f"error: {str(e)}"
@@ -339,14 +378,14 @@ async def health_check():
 
 # Authentication Endpoints
 # Test route to verify routing works
-@app.get("/auth/test")
+@api_router.get("/auth/test")
 async def auth_test():
     """Test endpoint to verify auth routes are registered."""
     return {"message": "Auth routes are working", "status": "ok"}
 
 # Register route - this print confirms the route decorator is executed
 print("Registering /auth/register route...")
-@app.post("/auth/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@api_router.post("/auth/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(request: RegisterRequest):
     """
     Register a new user.
@@ -402,7 +441,7 @@ async def register(request: RegisterRequest):
         )
 
 
-@app.post("/auth/login", response_model=TokenResponse)
+@api_router.post("/auth/login", response_model=TokenResponse)
 async def login(request: LoginRequest):
     """
     Login and get access token.
@@ -429,13 +468,57 @@ async def login(request: LoginRequest):
     )
 
 
-@app.get("/auth/me", response_model=UserResponse)
+@api_router.get("/auth/me", response_model=UserResponse)
 async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     """Get current user information."""
     return UserResponse(**current_user)
 
 
-@app.post("/query", response_model=QueryResponse)
+@api_router.get("/auth/token-info")
+async def get_token_info(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+):
+    """Debug endpoint to check token expiration information."""
+    try:
+        token = None
+        auth_header = request.headers.get("Authorization")
+        
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        elif credentials and credentials.credentials:
+            token = credentials.credentials
+        
+        if not token:
+            return {"error": "No token provided"}
+        
+        # Decode without verification to get expiration info
+        from jose import jwt as jose_jwt
+        from datetime import datetime
+        unverified = jose_jwt.decode(token, options={"verify_signature": False})
+        
+        exp_timestamp = unverified.get("exp")
+        if exp_timestamp:
+            exp_datetime = datetime.fromtimestamp(exp_timestamp)
+            now = datetime.utcnow()
+            time_remaining_seconds = (exp_datetime - now).total_seconds()
+            time_remaining_minutes = time_remaining_seconds / 60
+            
+            return {
+                "token_expires_at": exp_datetime.isoformat(),
+                "current_time": now.isoformat(),
+                "time_remaining_minutes": round(time_remaining_minutes, 2),
+                "time_remaining_hours": round(time_remaining_minutes / 60, 2),
+                "is_expired": exp_datetime < now,
+                "user_id": unverified.get("sub")
+            }
+        else:
+            return {"error": "No expiration in token"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@api_router.post("/query", response_model=QueryResponse)
 async def query_knowledge_assistant(
     request: QueryRequest,
     current_user: dict = Depends(get_current_user)
@@ -502,7 +585,7 @@ async def query_knowledge_assistant(
         )
 
 
-@app.post("/query/stream")
+@api_router.post("/query/stream")
 async def query_knowledge_assistant_stream(
     request: QueryRequest,
     current_user: dict = Depends(get_current_user)
@@ -578,6 +661,15 @@ async def query_knowledge_assistant_stream(
             media_type="text/event-stream"
         )
 
+
+# Mount API router with /api prefix
+app.include_router(api_router, prefix="/api")
+
+# Keep root endpoint at / for health checks (outside /api prefix)
+@app.get("/")
+async def root_health():
+    """Root endpoint for ALB health checks."""
+    return {"status": "ok", "service": "PDF Knowledge Assistant API"}
 
 if __name__ == "__main__":
     import uvicorn

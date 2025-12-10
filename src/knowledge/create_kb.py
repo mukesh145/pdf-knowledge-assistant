@@ -12,8 +12,8 @@ from typing import List, Optional
 import numpy as np
 from pinecone import Pinecone, ServerlessSpec
 
-from src.backend.query_processing import QueryProcessor
-from src.backend.context_retriever import ContextRetriever
+from src.agent.query_processing import QueryProcessor
+from src.agent.context_retriever import ContextRetriever
 from src.knowledge.knowledge_extractor import Extractor
 from src.knowledge.chunker import Chunker
 
