@@ -85,6 +85,39 @@ jobs:
           aws-secret-access-key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
           aws-region: ${{env.AWS_REGION}}
       
+      - name: Get ALB DNS name
+        id: get-alb
+        run: |
+          # Try to get ALB URL from GitHub variable first, otherwise query AWS
+          if [ -n "${{ vars.ALB_URL }}" ]; then
+            ALB_URL="${{ vars.ALB_URL }}"
+            echo "Using ALB URL from GitHub variable: $ALB_URL"
+          else
+            # Get ALB DNS name by querying AWS (assuming ALB name follows pattern: {app-name}-alb)
+            APP_NAME="${{ vars.APP_NAME != '' && vars.APP_NAME || 'pdf-knowledge-assistant' }}"
+            echo "Looking for ALB with name containing: ${APP_NAME}"
+            
+            # List all ALBs and find one matching the app name
+            ALB_DNS=$(aws elbv2 describe-load-balancers --region ${{env.AWS_REGION}} \
+              --query "LoadBalancers[?contains(LoadBalancerName, '${APP_NAME}')].DNSName" \
+              --output text | head -n 1 | xargs)
+            
+            if [ -z "$ALB_DNS" ] || [ "$ALB_DNS" = "None" ]; then
+              echo "Warning: Could not find ALB matching '${APP_NAME}'. Listing all ALBs:"
+              aws elbv2 describe-load-balancers --region ${{env.AWS_REGION}} \
+                --query "LoadBalancers[*].[LoadBalancerName,DNSName]" --output table || true
+              echo ""
+              echo "ERROR: Please set ALB_URL as a GitHub variable or ensure ALB exists."
+              echo "You can find the ALB DNS name in AWS Console or Terraform outputs."
+              exit 1
+            else
+              ALB_URL="http://${ALB_DNS}"
+              echo "Found ALB DNS: $ALB_DNS"
+              echo "Using API Base URL: ${ALB_URL}"
+            fi
+          fi
+          echo "API_BASE_URL=${ALB_URL}" >> $GITHUB_OUTPUT
+      
       - name: Render task defination with new image
         id: render
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -92,6 +125,8 @@ jobs:
           task-definition: deploy/task-def-ui.json
           container-name: ${{ vars.ECS_CONTAINER_NAME_UI != '' && vars.ECS_CONTAINER_NAME_UI || 'pdf-knowledge-assistant-ui' }}
           image: ${{needs.build_and_push_ui.outputs.IMAGE_REF}}
+          container-env-vars: |
+            VITE_API_BASE_URL=${{steps.get-alb.outputs.API_BASE_URL}}
       
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2

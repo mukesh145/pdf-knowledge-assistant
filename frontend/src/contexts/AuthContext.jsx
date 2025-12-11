@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { authAPI } from '../utils/api';
 
 const AuthContext = createContext(null);
@@ -16,29 +16,52 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(localStorage.getItem('access_token'));
 
+  const logout = useCallback(() => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('user');
+    setToken(null);
+    setUser(null);
+  }, []);
+
   useEffect(() => {
     // Check if user is logged in on mount
-    const storedToken = localStorage.getItem('access_token');
-    const storedUser = localStorage.getItem('user');
-    
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
-      // Verify token is still valid
-      authAPI.getMe()
-        .then((userData) => {
-          setUser(userData);
-          localStorage.setItem('user', JSON.stringify(userData));
-        })
-        .catch(() => {
-          // Token invalid, clear storage
-          logout();
-        })
-        .finally(() => setLoading(false));
-    } else {
-      setLoading(false);
-    }
-  }, []);
+    const checkAuth = async () => {
+      try {
+        const storedToken = localStorage.getItem('access_token');
+        const storedUser = localStorage.getItem('user');
+        
+        if (storedToken && storedUser) {
+          setToken(storedToken);
+          try {
+            const parsedUser = JSON.parse(storedUser);
+            setUser(parsedUser);
+            
+            // Verify token is still valid
+            try {
+              const userData = await authAPI.getMe();
+              setUser(userData);
+              localStorage.setItem('user', JSON.stringify(userData));
+            } catch (error) {
+              // Token invalid or API unavailable, clear storage
+              console.warn('Token validation failed:', error);
+              logout();
+            }
+          } catch (parseError) {
+            // Invalid user data in localStorage, clear it
+            console.warn('Failed to parse user data:', parseError);
+            logout();
+          }
+        }
+      } catch (error) {
+        // Catch any unexpected errors to prevent blank screen
+        console.error('Auth check error:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkAuth();
+  }, [logout]);
 
   const login = async (email, password) => {
     try {
@@ -100,12 +123,6 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('user');
-    setToken(null);
-    setUser(null);
-  };
 
   const value = {
     user,
