@@ -129,7 +129,7 @@ jobs:
           task-definition: deploy/task-def-ui.json
           container-name: ${{ vars.ECS_CONTAINER_NAME_UI != '' && vars.ECS_CONTAINER_NAME_UI || 'pdf-knowledge-assistant-ui' }}
           image: ${{needs.build_and_push_ui.outputs.IMAGE_REF}}
-          container-env-vars: |
+          environment-variables: |
             VITE_API_BASE_URL=${{ steps.get-alb.outputs.API_BASE_URL }}
       
       - name: Deploy to ECS
