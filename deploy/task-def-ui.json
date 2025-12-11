@@ -24,12 +24,6 @@
           "protocol": "tcp"
         }
       ],
-      "environment": [
-        {
-          "name": "VITE_API_BASE_URL",
-          "value": ""
-        }
-      ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
