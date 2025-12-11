@@ -118,6 +118,10 @@ jobs:
           fi
           echo "API_BASE_URL=${ALB_URL}" >> $GITHUB_OUTPUT
       
+      - name: Debug ALB URL output
+        run: |
+          echo "API_BASE_URL value: ${{ steps.get-alb.outputs.API_BASE_URL }}"
+      
       - name: Render task defination with new image
         id: render
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -126,7 +130,7 @@ jobs:
           container-name: ${{ vars.ECS_CONTAINER_NAME_UI != '' && vars.ECS_CONTAINER_NAME_UI || 'pdf-knowledge-assistant-ui' }}
           image: ${{needs.build_and_push_ui.outputs.IMAGE_REF}}
           container-env-vars: |
-            VITE_API_BASE_URL=${{steps.get-alb.outputs.API_BASE_URL}}
+            VITE_API_BASE_URL=${{ steps.get-alb.outputs.API_BASE_URL }}
       
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
