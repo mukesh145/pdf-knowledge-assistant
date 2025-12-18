@@ -4,3 +4,6 @@ intent_classification_model:
 embeddings_model:
   name: "BAAI/bge-m3"
 
+s3:
+  drift_logs_bucket: "pdf-knowledge-assistant-drift-logs"
+

@@ -1,4 +1,5 @@
-from typing import TypedDict, Union, Iterator
+from typing import TypedDict, Union, Iterator, List
+import time
 from langgraph.graph import StateGraph, START, END
 from .query_processing import QueryProcessor
 from .intent_classifier import IntentClassifier
@@ -25,8 +26,15 @@ class QueryState(TypedDict):
         is_prev_memory_required: Whether previous memory is required for the query
         user_id: The user ID for retrieving conversation history
         context: Retrieved context from vector database
+        confidence_scores: List of confidence scores for retrieved contexts
+        retrieval_time_ms: Time taken for context retrieval in milliseconds
         memory: Retrieved conversation history
         llm_response: The LLM-generated response to the user's query
+        is_context_sufficient: Boolean indicating if context/memory are sufficient
+        input_tokens: Number of input tokens used by LLM
+        output_tokens: Number of output tokens used by LLM
+        total_time_ms: Total time taken for the entire forward run in milliseconds
+        start_time: Timestamp when the forward run started (for internal tracking)
     """
     query: str
     processed_query: str
@@ -34,8 +42,15 @@ class QueryState(TypedDict):
     is_prev_memory_required: bool
     user_id: int
     context: str
+    confidence_scores: List[float]
+    retrieval_time_ms: float
     memory: str
     llm_response: str
+    is_context_sufficient: bool
+    input_tokens: int
+    output_tokens: int
+    total_time_ms: float
+    start_time: float
 
 
 def process_query_node(state: QueryState) -> QueryState:
@@ -160,21 +175,28 @@ def get_context_node(state: QueryState) -> QueryState:
         state: The current state containing the processed query
         
     Returns:
-        Updated state with context retrieved from vector database
+        Updated state with context retrieved from vector database, confidence scores, and retrieval time
     """
     # Initialize context retriever
     # context_retriever = ContextRetriever()
     
     # Retrieve context using the processed query
-    # retrieve_context returns a list of context strings
-    contexts = context_retriever.retrieve_context(state["processed_query"], top_k=5)
+    # retrieve_context now returns a dictionary with contexts, confidence_scores, and retrieval_time_ms
+    retrieval_result = context_retriever.retrieve_context(state["processed_query"], top_k=5)
+    
+    # Extract the results
+    contexts = retrieval_result.get("contexts", [])
+    confidence_scores = retrieval_result.get("confidence_scores", [])
+    retrieval_time_ms = retrieval_result.get("retrieval_time_ms", 0.0)
     
     # Join the list of contexts into a single string
     # Use newlines to separate different context chunks
     context_string = "\n\n".join(contexts) if contexts else ""
     
     return {
-        "context": context_string
+        "context": context_string,
+        "confidence_scores": confidence_scores,
+        "retrieval_time_ms": retrieval_time_ms
     }
 
 
@@ -186,7 +208,8 @@ def llm_orchestrator_node(state: QueryState) -> QueryState:
         state: The current state containing query, context, and memory
         
     Returns:
-        Updated state with llm_response added
+        Updated state with llm_response, is_context_sufficient, input_tokens, and output_tokens added.
+        All fields returned from LLMOrchestrator.generate_response() are stored in the state.
     """
     # Get the query, context, and memory from state
     query = state.get("query", "")
@@ -195,33 +218,52 @@ def llm_orchestrator_node(state: QueryState) -> QueryState:
     
     # Generate response using LLMOrchestrator
     # Handle None or empty strings appropriately
-    response = llm_orchestrator.generate_response(
+    # Returns a dict with: answer, is_context_sufficient, input_tokens, output_tokens
+    result = llm_orchestrator.generate_response(
         query=query,
         context=context if context else None,
         past_conversation=memory if memory else None
     )
     
-    return {
-        "llm_response": response
+    # Extract all fields from the result and store them in state
+    # Ensure all fields are properly typed and have default values
+    # All fields returned from generate_response() are explicitly stored:
+    # - answer -> llm_response
+    # - is_context_sufficient -> is_context_sufficient
+    # - input_tokens -> input_tokens
+    # - output_tokens -> output_tokens
+    updated_state = {
+        "llm_response": result.get("answer", ""),
+        "is_context_sufficient": bool(result.get("is_context_sufficient", False)),
+        "input_tokens": int(result.get("input_tokens", 0)),
+        "output_tokens": int(result.get("output_tokens", 0))
     }
+    
+    return updated_state
 
 
-def logger_node(state: QueryState) -> QueryState:
+def log_conversation_async(state: QueryState) -> None:
     """
-    Node function that logs the data to the logs db and adds query and llm_response
-    to the conversation_history table.
+    Asynchronous logging function that logs the data to the logs db and adds query and llm_response
+    to the conversation_history table. Also generates drift detection JSON and uploads to S3.
+    
+    This function is designed to be called asynchronously (e.g., via FastAPI BackgroundTasks)
+    AFTER the response has been returned to the user, to avoid adding latency.
     
     Args:
         state: The current state containing query, llm_response, and other workflow data
-        
-    Returns:
-        State unchanged (returns empty dict to maintain state as-is)
     """
     try:
         # Get user_id, query, and llm_response from state
         user_id = state.get("user_id")
         query = state.get("query", "")
         llm_response = state.get("llm_response", "")
+        
+        # Calculate total time for forward run
+        start_time = state.get("start_time")
+        total_time_ms = 0.0
+        if start_time:
+            total_time_ms = (time.time() - start_time) * 1000  # Convert to milliseconds
         
         # Save conversation to conversation_history table
         if user_id is not None and query and llm_response:
@@ -240,16 +282,27 @@ def logger_node(state: QueryState) -> QueryState:
         # Save logs to logs table
         logger.save_logs(logs_state)
         
+        # Generate drift detection JSON and upload to S3
+        drift_metrics = {
+            "context_retrieval_time": state.get("retrieval_time_ms", 0.0),
+            "confidence_scores": state.get("confidence_scores", []),
+            "is_context_sufficient": state.get("is_context_sufficient", False),
+            "llm_input_tokens_length": state.get("input_tokens", 0),
+            "llm_output_tokens_length": state.get("output_tokens", 0),
+            "total_time_for_forward_run": total_time_ms
+        }
+        
+        # Upload to S3 if user_id is available
+        if user_id is not None:
+            logger.upload_drift_metrics_to_s3(user_id, drift_metrics)
+        
     except Exception as e:
         # If there's an error logging, we don't want to fail the workflow
         # In production, you might want to log this error to a separate error log
-        pass
+        print(f"Warning: Failed to log conversation asynchronously: {e}")
     finally:
         # Clean up the database connection
         logger.close_connection()
-    
-    # Return empty dict to maintain state as-is
-    return {}
 
 
 def route_after_classification(state: QueryState) -> Union[str, list[str]]:
@@ -299,7 +352,7 @@ def create_dag():
     workflow.add_node("get_memory", get_memory_node)
     workflow.add_node("get_context", get_context_node)
     workflow.add_node("llm_orchestrator", llm_orchestrator_node)
-    workflow.add_node("logger", logger_node)
+    # Note: Logger node removed - logging happens asynchronously after response is returned
     
     # Define the flow: START -> process_query -> intent_classifier -> (conditional routing)
     workflow.add_edge(START, "process_query")
@@ -322,9 +375,8 @@ def create_dag():
     workflow.add_edge("get_memory", "llm_orchestrator")
     workflow.add_edge("get_context", "llm_orchestrator")
     
-    # llm_orchestrator leads to logger, and logger is the final node before END
-    workflow.add_edge("llm_orchestrator", "logger")
-    workflow.add_edge("logger", END)
+    # llm_orchestrator leads directly to END (logging happens asynchronously after response is returned)
+    workflow.add_edge("llm_orchestrator", END)
     
     # Compile the graph
     app = workflow.compile()
@@ -343,6 +395,9 @@ def run_ka_dag(query: str, user_id: int) -> dict:
     Returns:
         Dictionary containing the final state with query and processed_query
     """
+    # Start timer for entire forward run
+    start_time = time.time()
+    
     # Create the DAG
     app = create_dag()
     
@@ -354,8 +409,15 @@ def run_ka_dag(query: str, user_id: int) -> dict:
         "is_prev_memory_required": False,  # Will be set by the intent classifier
         "user_id": user_id,  # User ID for memory retrieval
         "context": "", # Will be populated by the context node
+        "confidence_scores": [], # Will be populated by the context node
+        "retrieval_time_ms": 0.0, # Will be populated by the context node
         "memory": "", # Will be populated by the memory node
         "llm_response": "", # Will be populated by the llm_orchestrator node
+        "is_context_sufficient": False, # Will be populated by the llm_orchestrator node
+        "input_tokens": 0, # Will be populated by the llm_orchestrator node
+        "output_tokens": 0, # Will be populated by the llm_orchestrator node
+        "total_time_ms": 0.0, # Will be calculated in logger_node
+        "start_time": start_time, # Store start time for logger_node
     }
     
     # Run the workflow
@@ -381,6 +443,9 @@ def run_ka_dag_stream(query: str, user_id: int) -> Iterator[dict]:
         - {"type": "token", "data": "..."} - Individual tokens from LLM
         - {"type": "done", "data": {}} - Stream completion signal
     """
+    # Start timer for entire forward run
+    start_time = time.time()
+    
     # Initial state
     state = {
         "query": query,
@@ -389,8 +454,15 @@ def run_ka_dag_stream(query: str, user_id: int) -> Iterator[dict]:
         "is_prev_memory_required": False,
         "user_id": user_id,
         "context": "",
+        "confidence_scores": [],
+        "retrieval_time_ms": 0.0,
         "memory": "",
         "llm_response": "",
+        "is_context_sufficient": False,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_time_ms": 0.0,
+        "start_time": start_time,
     }
     
     # Process query
@@ -424,17 +496,35 @@ def run_ka_dag_stream(query: str, user_id: int) -> Iterator[dict]:
     memory_text = state.get("memory", "")
     
     full_response = ""
+    is_context_sufficient = False
+    input_tokens = 0
+    output_tokens = 0
+    
     try:
-        for token in llm_orchestrator.generate_response_stream(
+        for chunk in llm_orchestrator.generate_response_stream(
             query=query_text,
             context=context_text if context_text else None,
             past_conversation=memory_text if memory_text else None
         ):
-            full_response += token
-            yield {
-                "type": "token",
-                "data": token
-            }
+            if chunk.get("type") == "token":
+                token = chunk.get("data", "")
+                full_response += token
+                yield {
+                    "type": "token",
+                    "data": token
+                }
+            elif chunk.get("type") == "metadata":
+                # Extract all metadata from the streaming response
+                # This includes: answer, is_context_sufficient, input_tokens, output_tokens
+                metadata = chunk.get("data", {})
+                if metadata:
+                    # Store all metadata fields in state
+                    is_context_sufficient = bool(metadata.get("is_context_sufficient", False))
+                    input_tokens = int(metadata.get("input_tokens", 0))
+                    output_tokens = int(metadata.get("output_tokens", 0))
+                    # Also update full_response from metadata if available (as backup)
+                    if "answer" in metadata:
+                        full_response = metadata.get("answer", full_response)
     except Exception as e:
         # Yield error if streaming fails
         yield {
@@ -443,19 +533,26 @@ def run_ka_dag_stream(query: str, user_id: int) -> Iterator[dict]:
         }
         return
     
-    # Update state with full response for logging
+    # Update state with all fields received from LLM orchestrator
+    # Ensure all fields are properly stored in state for logging and downstream processing
     state["llm_response"] = full_response
+    state["is_context_sufficient"] = is_context_sufficient
+    state["input_tokens"] = input_tokens
+    state["output_tokens"] = output_tokens
     
-    # Log the conversation (run logger node)
-    try:
-        logger_node(state)
-    except Exception as e:
-        # Don't fail if logging fails, but log the error
-        print(f"Warning: Failed to log conversation: {e}")
+    # Update state with total_time_ms before logging
+    if start_time:
+        state["total_time_ms"] = (time.time() - start_time) * 1000  # Convert to milliseconds
     
-    # Yield final message
+    # Yield final message with state for async logging (logging will happen asynchronously)
+    # The state is included so the API endpoint can trigger logging after response is sent
     yield {
         "type": "done",
-        "data": {}
+        "data": {
+            "state": state  # Include full state for async logging
+        }
     }
+    
+    # Note: Logging should be triggered asynchronously by the API endpoint after stream completes
+    # This ensures the response is returned to the user first, then logging happens in background
 
