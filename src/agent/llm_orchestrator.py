@@ -1,10 +1,11 @@
 import dspy
 from dotenv import load_dotenv
-from typing import Optional, Iterator
+from typing import Optional, Iterator, Dict
 from dspy import Signature, InputField, OutputField
 from dspy import LM
 import openai
 import os
+import json
 
 # Load environment variables from .env file
 load_dotenv()
@@ -20,14 +21,16 @@ class AnswerGenerationSignature(Signature):
         past_conversation: Previous conversation history
         system_prompt: System prompt providing instructions for answer generation
     
-    Output:
+    Outputs:
         answer: The generated answer to the user's query
+        is_context_sufficient: Boolean indicating if the context or memory are sufficient/appropriate
     """
     user_query: str = InputField(desc="The user's query or question")
     retrieved_context: str = InputField(desc="Context retrieved from the knowledge base")
     past_conversation: str = InputField(desc="Previous conversation history")
     system_prompt: str = InputField(desc="System prompt with instructions for answer generation")
     answer: str = OutputField(desc="The generated answer to the user's query")
+    is_context_sufficient: bool = OutputField(desc="True if the context or memory are sufficient and appropriate to generate an appropriate answer, False otherwise")
 
 
 class LLMOrchestrator:
@@ -45,14 +48,15 @@ class LLMOrchestrator:
     
     def _initialize_llm(self):
         """
-        Initialize the GPT-4o LLM using DSPy.
+        Initialize the GPT-4o LLM using DSPy with token usage tracking enabled.
         
         Returns:
             Configured DSPy language model (GPT-4o)
         """
         # Initialize GPT-4o model
         lm = LM("openai/gpt-4o")
-        dspy.configure(lm=lm)
+        # Enable token usage tracking
+        dspy.configure(lm=lm, track_usage=True)
         return lm
     
     def _create_predict_model(self):
@@ -71,7 +75,7 @@ class LLMOrchestrator:
         query: str, 
         context: Optional[str] = None, 
         past_conversation: Optional[str] = None
-    ) -> str:
+    ) -> Dict[str, any]:
         """
         Generate an appropriate response to the user's query using the retrieved context
         and past conversation history.
@@ -82,7 +86,11 @@ class LLMOrchestrator:
             past_conversation: Previous conversation history (can be None or empty string)
             
         Returns:
-            Generated answer string
+            Dictionary containing:
+                - answer: Generated answer string
+                - is_context_sufficient: Boolean indicating if context/memory are sufficient
+                - input_tokens: Number of input tokens used
+                - output_tokens: Number of output tokens used
         """
         # Handle None values by converting to empty strings
         context = context if context is not None else ""
@@ -91,24 +99,94 @@ class LLMOrchestrator:
         # Generate an appropriate system prompt
         system_prompt = self._generate_system_prompt(context, past_conversation)
         
-        # Call the Predict model with all inputs
-        result = self.model(
+        # Build messages for OpenAI API to track tokens
+        messages = [
+            {"role": "system", "content": system_prompt}
+        ]
+        
+        # Add past conversation if available
+        if past_conversation and past_conversation.strip():
+            messages.append({
+                "role": "system", 
+                "content": f"Previous conversation history:\n{past_conversation}"
+            })
+        
+        # Add context if available
+        user_content = query
+        if context and context.strip():
+            user_content = f"Context from knowledge base:\n{context}\n\nUser query: {query}"
+        
+        messages.append({"role": "user", "content": user_content})
+        
+        # Use DSPy to generate response with is_context_sufficient
+        dspy_result = self.model(
             user_query=query,
             retrieved_context=context if context else "No context available.",
             past_conversation=past_conversation if past_conversation else "No previous conversation.",
-            system_prompt=system_prompt
+            system_prompt=(
+                f"{system_prompt}\n\n"
+                "Evaluate whether the provided context and/or conversation history "
+                "are sufficient and appropriate to answer the user's query accurately. "
+                "Set is_context_sufficient to True only if the context or memory contain "
+                "relevant information that allows you to provide an accurate answer."
+            )
         )
         
-        return result.answer
+        answer = dspy_result.answer
+        is_context_sufficient = getattr(dspy_result, 'is_context_sufficient', False)
+        
+        # Get token usage from DSPy (tracked automatically when track_usage=True)
+        input_tokens = 0
+        output_tokens = 0
+        try:
+            usage_stats = dspy_result.get_lm_usage()
+            # usage_stats is a dict mapping model names to usage info
+            # For OpenAI models, it typically contains 'prompt_tokens' and 'completion_tokens'
+            if usage_stats:
+                # Get usage from the first (and typically only) model
+                model_usage = list(usage_stats.values())[0] if usage_stats else {}
+                if isinstance(model_usage, dict):
+                    input_tokens = model_usage.get('prompt_tokens', 0)
+                    output_tokens = model_usage.get('completion_tokens', 0)
+                # Handle case where usage_stats might be in a different format
+                elif hasattr(model_usage, 'prompt_tokens'):
+                    input_tokens = model_usage.prompt_tokens or 0
+                    output_tokens = model_usage.completion_tokens or 0
+        except (AttributeError, IndexError, KeyError) as e:
+            # Fallback: count tokens using tiktoken if DSPy usage tracking fails
+            try:
+                import tiktoken
+                encoding = tiktoken.encoding_for_model("gpt-4o")
+                # Count input tokens (all messages)
+                input_text = "\n".join([msg["content"] for msg in messages])
+                input_tokens = len(encoding.encode(input_text))
+                # Count output tokens (the answer)
+                output_tokens = len(encoding.encode(answer))
+            except ImportError:
+                # Final fallback estimation: ~4 characters per token
+                input_text = "\n".join([msg["content"] for msg in messages])
+                input_tokens = len(input_text) // 4
+                output_tokens = len(answer) // 4
+        
+        return {
+            "answer": answer,
+            "is_context_sufficient": bool(is_context_sufficient),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens
+        }
     
     def generate_response_stream(
         self, 
         query: str, 
         context: Optional[str] = None, 
         past_conversation: Optional[str] = None
-    ) -> Iterator[str]:
+    ) -> Iterator[Dict[str, any]]:
         """
         Generate a streaming response to the user's query using OpenAI's streaming API.
+        
+        Note: This method uses OpenAI API directly (not DSPy) for streaming, so token tracking
+        uses tiktoken or estimation. For non-streaming responses, use generate_response() which
+        leverages DSPy's built-in token tracking.
         
         Args:
             query: The user's query string
@@ -116,7 +194,9 @@ class LLMOrchestrator:
             past_conversation: Previous conversation history (can be None or empty string)
             
         Yields:
-            Token chunks as they are generated
+            Dictionary chunks with:
+                - "type": "token" or "metadata"
+                - "data": token string (for "token") or dict with answer, is_context_sufficient, tokens (for "metadata")
         """
         # Handle None values by converting to empty strings
         context = context if context is not None else ""
@@ -159,10 +239,76 @@ class LLMOrchestrator:
             temperature=0.7
         )
         
+        full_response = ""
+        input_tokens = 0
+        output_tokens = 0
+        
         # Yield tokens as they arrive
         for chunk in stream:
             if chunk.choices[0].delta.content is not None:
-                yield chunk.choices[0].delta.content
+                token = chunk.choices[0].delta.content
+                full_response += token
+                yield {
+                    "type": "token",
+                    "data": token
+                }
+            
+            # Usage information may come in a separate chunk after streaming completes
+            # Check if this chunk has usage info
+            if hasattr(chunk, 'usage') and chunk.usage is not None:
+                input_tokens = chunk.usage.prompt_tokens or 0
+                output_tokens = chunk.usage.completion_tokens or 0
+        
+        # If usage wasn't captured from the stream, count tokens using tiktoken
+        if input_tokens == 0 and output_tokens == 0:
+            try:
+                import tiktoken
+                encoding = tiktoken.encoding_for_model("gpt-4o")
+                # Count input tokens (all messages)
+                input_text = "\n".join([msg["content"] for msg in messages])
+                input_tokens = len(encoding.encode(input_text))
+                # Count output tokens (the full response)
+                output_tokens = len(encoding.encode(full_response))
+            except ImportError:
+                # Fallback estimation: ~4 characters per token
+                input_text = "\n".join([msg["content"] for msg in messages])
+                input_tokens = len(input_text) // 4
+                output_tokens = len(full_response) // 4
+        
+        # After streaming completes, determine is_context_sufficient using DSPy
+        is_context_sufficient = False
+        try:
+            # Use DSPy to evaluate context sufficiency
+            eval_result = self.model(
+                user_query=query,
+                retrieved_context=context if context else "No context available.",
+                past_conversation=past_conversation if past_conversation else "No previous conversation.",
+                system_prompt=(
+                    f"{system_prompt}\n\n"
+                    "Evaluate whether the provided context and/or conversation history "
+                    "were sufficient and appropriate to answer the user's query accurately. "
+                    "Set is_context_sufficient to True only if the context or memory contain "
+                    "relevant information that allows you to provide an accurate answer."
+                )
+            )
+            is_context_sufficient = getattr(eval_result, 'is_context_sufficient', False)
+        except Exception as e:
+            # Fallback: determine programmatically based on availability
+            has_context = context and context.strip()
+            has_memory = past_conversation and past_conversation.strip()
+            # Consider sufficient if we have at least one source
+            is_context_sufficient = has_context or has_memory
+        
+        # Yield metadata with final results
+        yield {
+            "type": "metadata",
+            "data": {
+                "answer": full_response,
+                "is_context_sufficient": bool(is_context_sufficient),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens
+            }
+        }
     
     def _generate_system_prompt(self, context: str, past_conversation: str) -> str:
         """

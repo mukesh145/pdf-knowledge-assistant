@@ -8,20 +8,21 @@ let API_BASE_URL = 'http://localhost:8000';
 try {
   // This will be available at runtime if entrypoint script creates it
   const runtimeConfig = window.__RUNTIME_CONFIG__;
-  if (runtimeConfig && runtimeConfig.VITE_API_BASE_URL) {
-    API_BASE_URL = runtimeConfig.VITE_API_BASE_URL;
-    console.log('Using runtime API URL:', API_BASE_URL);
-  } else if (import.meta.env.VITE_API_BASE_URL) {
-    API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-    console.log('Using build-time API URL:', API_BASE_URL);
+  if (runtimeConfig && runtimeConfig.VITE_API_BASE_URL !== undefined && runtimeConfig.VITE_API_BASE_URL !== null) {
+    // Empty string means use relative URLs (for nginx proxy)
+    API_BASE_URL = runtimeConfig.VITE_API_BASE_URL || '';
+    console.log('Using runtime API URL:', API_BASE_URL || '(relative URLs)');
+  } else if (import.meta.env.VITE_API_BASE_URL !== undefined && import.meta.env.VITE_API_BASE_URL !== null) {
+    API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+    console.log('Using build-time API URL:', API_BASE_URL || '(relative URLs)');
   } else {
     console.warn('No API URL configured, using default:', API_BASE_URL);
   }
 } catch (e) {
   // Fallback to build-time env var
-  if (import.meta.env.VITE_API_BASE_URL) {
-    API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-    console.log('Using build-time API URL (fallback):', API_BASE_URL);
+  if (import.meta.env.VITE_API_BASE_URL !== undefined && import.meta.env.VITE_API_BASE_URL !== null) {
+    API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+    console.log('Using build-time API URL (fallback):', API_BASE_URL || '(relative URLs)');
   } else {
     console.warn('No API URL configured, using default:', API_BASE_URL);
   }
@@ -131,7 +132,9 @@ export const queryAPI = {
       headers.Authorization = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${API_BASE_URL}/api/query/stream`, {
+    // Use relative URL if API_BASE_URL is empty (for nginx proxy)
+    const streamUrl = API_BASE_URL ? `${API_BASE_URL}/api/query/stream` : '/api/query/stream';
+    const response = await fetch(streamUrl, {
       method: 'POST',
       headers: headers,
       body: JSON.stringify({ query }),

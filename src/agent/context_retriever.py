@@ -1,5 +1,6 @@
-from typing import List
+from typing import List, Dict, Tuple, Any
 import os
+import time
 import numpy as np
 from FlagEmbedding import FlagModel
 from pinecone import Pinecone
@@ -116,20 +117,26 @@ class ContextRetriever:
                 f"Failed to connect to Pinecone index '{index_name}': {str(e)}. "
                 "Please verify your PINECONE_API_KEY and PINECONE_INDEX_NAME are correct."
             )
-    def retrieve_context(self, query: str, top_k: int = 5) -> List[str]:
+    def retrieve_context(self, query: str, top_k: int = 5) -> Dict[str, Any]:
         """
-        Convert query to embeddings, query the vector DB, and return top results.
+        Convert query to embeddings, query the vector DB, and return top results with confidence scores and timing.
         
         Args:
             query: The query string to search for
             top_k: Number of top results to retrieve (default: 5)
             
         Returns:
-            List of context strings from the top search results
+            Dictionary containing:
+                - contexts: List of context strings from the top search results
+                - confidence_scores: List of confidence scores (similarity scores) for each context
+                - retrieval_time_ms: Retrieval time in milliseconds
             
         Raises:
             Exception: If Pinecone index is not available or query fails
         """
+        # Start timing
+        start_time = time.time()
+        
         try:
             # Step 1: Convert query to embeddings
             query_embedding = self.convert_to_embeddings(query)
@@ -147,20 +154,39 @@ class ContextRetriever:
                 include_metadata=True
             )
             
-            # Step 4: Extract context strings from matches
+            # Step 4: Extract context strings and confidence scores from matches
             contexts = []
+            confidence_scores = []
             for match in results.get('matches', []):
                 metadata = match.get('metadata', {})
                 text = metadata.get('text', '')
+                score = match.get('score', 0.0)  # Get similarity score from Pinecone
                 if text:  # Only add non-empty contexts
                     contexts.append(text)
+                    confidence_scores.append(score)
             
-            return contexts
+            # Calculate retrieval time in milliseconds
+            end_time = time.time()
+            retrieval_time_ms = (end_time - start_time) * 1000
+            
+            return {
+                "contexts": contexts,
+                "confidence_scores": confidence_scores,
+                "retrieval_time_ms": retrieval_time_ms
+            }
             
         except Exception as e:
+            # Calculate time even if there's an error
+            end_time = time.time()
+            retrieval_time_ms = (end_time - start_time) * 1000
+            
             # Log the error but don't fail the entire workflow
             error_msg = str(e)
             print(f"WARNING: Context retrieval failed: {error_msg}")
-            # Return empty list to allow workflow to continue without context
-            return []
+            # Return empty lists and timing to allow workflow to continue without context
+            return {
+                "contexts": [],
+                "confidence_scores": [],
+                "retrieval_time_ms": retrieval_time_ms
+            }
 
